@@ -12,13 +12,41 @@ Built for C64 demo scene production. All color operations use OKLab perceptual c
 | ![face](examples/face-c64.png) | ![fantasy](examples/fantasy-c64.png) | ![golden3](examples/golden3-c64.png) |
 | ![monster](examples/monster-c64.png) | ![ship](examples/ship-c64.png) | ![game](examples/game-c64.png) |
 
+## Dither Modes
+
+All 17 dither modes shown with `--gamma 1 --dither-strength 2 --error-clamp 0.2`:
+
+**Ordered -- square pixel:**
+
+| none | bayer4 | bayer8 |
+|---|---|---|
+| ![none](examples/dither_gallery/none.png) | ![bayer4](examples/dither_gallery/bayer4.png) | ![bayer8](examples/dither_gallery/bayer8.png) |
+
+**Ordered -- 2:1 multicolor:**
+
+| checker | bayer2x2 | h2x4 | clustered |
+|---|---|---|---|
+| ![checker](examples/dither_gallery/checker.png) | ![bayer2x2](examples/dither_gallery/bayer2x2.png) | ![h2x4](examples/dither_gallery/h2x4.png) | ![clustered](examples/dither_gallery/clustered.png) |
+
+**Ordered -- horizontal lines:**
+
+| line2 | line-checker | line4 | line8 |
+|---|---|---|---|
+| ![line2](examples/dither_gallery/line2.png) | ![line-checker](examples/dither_gallery/line-checker.png) | ![line4](examples/dither_gallery/line4.png) | ![line8](examples/dither_gallery/line8.png) |
+
+**Error diffusion:**
+
+| fs | atkinson | sierra | fs-wide | jarvis | line-fs |
+|---|---|---|---|---|---|
+| ![fs](examples/dither_gallery/fs.png) | ![atkinson](examples/dither_gallery/atkinson.png) | ![sierra](examples/dither_gallery/sierra.png) | ![fs-wide](examples/dither_gallery/fs-wide.png) | ![jarvis](examples/dither_gallery/jarvis.png) | ![line-fs](examples/dither_gallery/line-fs.png) |
+
 ## Features
 
 - **Bitmap modes** -- hires (320x200, 2 colors/cell) and multicolor (160x200, 4 colors/cell)
 - **Sprite sheets** -- hires and multicolor, arbitrary grid dimensions
 - **Character sets** -- 256-char charset generation with dedup, pattern merging, k-means refinement, and C header export
 - **7 VIC-II palettes** -- Pepto, VICE, Colodore, Deekay, Godot, C64 Wiki, Levy
-- **12 dither modes** -- ordered (Bayer, checker, clustered dot) and error diffusion (Floyd-Steinberg, Atkinson, Jarvis), including 2:1 pixel-ratio variants for multicolor
+- **17 dither modes** -- ordered (Bayer, checker, clustered dot, horizontal lines) and error diffusion (Floyd-Steinberg, Atkinson, Jarvis), including 2:1 pixel-ratio and line-biased variants
 - **Perceptual preprocessing** -- OKLab-space palette range matching, plus brightness/contrast/saturation/gamma
 - **Gallery mode** -- preview all dither methods or parameter sweeps inline in the terminal (iTerm2)
 - **C header export** -- charset data, screen map, and color RAM as includable arrays

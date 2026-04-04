@@ -107,12 +107,53 @@ constexpr auto make_clustered_dot() noexcept {
     return m;
 }
 
+// Horizontal line 1x2 -- 2 levels, alternating light/dark rows
+constexpr auto make_line2() noexcept {
+    std::array<std::array<float, 1>, 2> m{};
+    m[0][0] = -0.25f;
+    m[1][0] =  0.25f;
+    return m;
+}
+
+// Line-checker hybrid 2x2 -- rows have large threshold difference,
+// columns have small offset. Produces horizontal lines with subtle
+// pixel variation within each row. Between line2 and checker.
+constexpr auto make_line_checker() noexcept {
+    std::array<std::array<float, 2>, 2> m{};
+    m[0][0] = -0.35f; m[0][1] = -0.15f;
+    m[1][0] =  0.15f; m[1][1] =  0.35f;
+    return m;
+}
+
+// Horizontal line 1x4 -- 4 levels, smooth vertical gradient
+constexpr auto make_line4() noexcept {
+    std::array<std::array<float, 1>, 4> m{};
+    m[0][0] = -0.375f;
+    m[1][0] = -0.125f;
+    m[2][0] =  0.125f;
+    m[3][0] =  0.375f;
+    return m;
+}
+
+// Horizontal line 1x8 -- 8 levels, finest horizontal line gradient
+constexpr auto make_line8() noexcept {
+    constexpr std::array<int, 8> raw = {{0, 4, 2, 6, 1, 5, 3, 7}};
+    std::array<std::array<float, 1>, 8> m{};
+    for (std::size_t y = 0; y < 8; ++y)
+        m[y][0] = (static_cast<float>(raw[y]) + 0.5f) / 8.0f - 0.5f;
+    return m;
+}
+
 constexpr auto bayer4 = make_bayer4x4();
 constexpr auto bayer8 = make_bayer8x8();
 constexpr auto checker_mat = make_checker();
 constexpr auto bayer2x2_mat = make_bayer2x2();
 constexpr auto h2x4_mat = make_h2x4();
 constexpr auto clustered_mat = make_clustered_dot();
+constexpr auto line2_mat = make_line2();
+constexpr auto line_checker_mat = make_line_checker();
+constexpr auto line4_mat = make_line4();
+constexpr auto line8_mat = make_line8();
 
 // ===========================================================================
 // OKLab arithmetic helpers
@@ -390,6 +431,19 @@ constexpr std::array jarvis_kernel = {
     DiffusionEntry{ 2, 2, 1.0f / 48.0f},
 };
 
+// Line-biased Floyd-Steinberg: no horizontal neighbor, all error goes downward.
+// Creates horizontal line coherence — adjacent pixels in the same row are
+// dithered independently, only receiving error from the row above.
+//          *
+//  2/8   3/8   2/8
+//        1/8
+constexpr std::array line_fs_kernel = {
+    DiffusionEntry{-1, 1, 2.0f / 8.0f},
+    DiffusionEntry{ 0, 1, 3.0f / 8.0f},
+    DiffusionEntry{ 1, 1, 2.0f / 8.0f},
+    DiffusionEntry{ 0, 2, 1.0f / 8.0f},
+};
+
 } // namespace
 
 void apply(const Image& image, quantize::ScreenResult& result,
@@ -430,6 +484,24 @@ void apply(const Image& image, quantize::ScreenResult& result,
                              params, settings.strength);
         return;
 
+    // Horizontal line ordered
+    case Method::line2:
+        apply_ordered_matrix(image, result, line2_mat, palette_lab,
+                             params, settings.strength);
+        return;
+    case Method::line_checker:
+        apply_ordered_matrix(image, result, line_checker_mat, palette_lab,
+                             params, settings.strength);
+        return;
+    case Method::line4:
+        apply_ordered_matrix(image, result, line4_mat, palette_lab,
+                             params, settings.strength);
+        return;
+    case Method::line8:
+        apply_ordered_matrix(image, result, line8_mat, palette_lab,
+                             params, settings.strength);
+        return;
+
     // Square-pixel error diffusion
     case Method::floyd_steinberg:
         apply_error_diffusion(image, result, palette, params,
@@ -458,6 +530,13 @@ void apply(const Image& image, quantize::ScreenResult& result,
         apply_error_diffusion(image, result, palette, params,
                               settings.strength, settings.error_clamp,
                               settings.serpentine, jarvis_kernel);
+        return;
+
+    // Horizontal line error diffusion
+    case Method::line_fs:
+        apply_error_diffusion(image, result, palette, params,
+                              settings.strength, settings.error_clamp,
+                              settings.serpentine, line_fs_kernel);
         return;
     }
 }

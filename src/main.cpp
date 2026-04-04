@@ -52,6 +52,7 @@ void print_usage() {
         "  --dither <method>               Dithering method (default: checker)\n"
         "     Square:  none, bayer4, bayer8, fs, atkinson, sierra\n"
         "     2:1 MC:  checker, bayer2x2, h2x4, clustered, fs-wide, jarvis\n"
+        "     Lines:   line2, line-checker, line4, line8, line-fs\n"
         "  --dither-strength <float>       Dithering strength 0.0-2.0 (default: 1.0)\n"
         "  --error-clamp <float>           Max error per channel 0.1-2.0 (default: 0.8)\n"
         "  --no-serpentine                  Disable serpentine scanning\n"
@@ -122,6 +123,11 @@ Result<Config> parse_args(int argc, char* argv[]) {
                 else if (val == "sierra") config.dither_settings.method = dither::Method::sierra_lite;
                 else if (val == "fs-wide") config.dither_settings.method = dither::Method::fs_wide;
                 else if (val == "jarvis") config.dither_settings.method = dither::Method::jarvis;
+                else if (val == "line2") config.dither_settings.method = dither::Method::line2;
+                else if (val == "line-checker") config.dither_settings.method = dither::Method::line_checker;
+                else if (val == "line4") config.dither_settings.method = dither::Method::line4;
+                else if (val == "line8") config.dither_settings.method = dither::Method::line8;
+                else if (val == "line-fs") config.dither_settings.method = dither::Method::line_fs;
                 else return std::unexpected{Error{ErrorCode::invalid_dimensions, "Unknown dither: " + std::string(val)}};
             } else if (arg == "--dither-strength") {
                 config.dither_settings.strength = std::stof(std::string(val));
@@ -322,6 +328,11 @@ constexpr std::array dither_gallery = {
     DitherGalleryEntry{dither::Method::sierra_lite,     "sierra (Sierra Lite)"},
     DitherGalleryEntry{dither::Method::fs_wide,         "fs-wide (2:1 Floyd-Steinberg)"},
     DitherGalleryEntry{dither::Method::jarvis,          "jarvis (2:1 Jarvis-Judice-Ninke)"},
+    DitherGalleryEntry{dither::Method::line2,           "line2 (horizontal 2-level)"},
+    DitherGalleryEntry{dither::Method::line_checker,   "line-checker (line-biased checker)"},
+    DitherGalleryEntry{dither::Method::line4,           "line4 (horizontal 4-level)"},
+    DitherGalleryEntry{dither::Method::line8,           "line8 (horizontal 8-level)"},
+    DitherGalleryEntry{dither::Method::line_fs,         "line-fs (vertical error diffusion)"},
 };
 
 struct FloatGalleryEntry {

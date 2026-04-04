@@ -18,6 +18,12 @@ enum class Method : unsigned char {
     h2x4,             // 2x4 Bayer, 8 levels -- perceptually square at 2:1
     clustered_dot,    // 4x4 clustered dot shaped for 2:1 display
 
+    // Horizontal line ordered dithering
+    line2,            // 1x2 alternating rows, 2 levels
+    line_checker,     // 2x2 line-biased: rows differ more than columns
+    line4,            // 1x4, 4 levels
+    line8,            // 1x8, 8 levels
+
     // Error diffusion -- standard (square pixel)
     floyd_steinberg,
     atkinson,
@@ -26,6 +32,9 @@ enum class Method : unsigned char {
     // Error diffusion -- 2:1 pixel-ratio aware
     fs_wide,          // Floyd-Steinberg with weights adjusted for 2:1
     jarvis,           // Jarvis-Judice-Ninke (wider kernel, handles 2:1 naturally)
+
+    // Error diffusion -- horizontal line biased
+    line_fs,          // Error only diffuses downward, no horizontal neighbor
 };
 
 struct Settings {
