@@ -5,6 +5,7 @@
 #include <array>
 #include <atomic>
 #include <cstddef>
+#include <format>
 #include <limits>
 #include <thread>
 #include <vector>
@@ -439,7 +440,9 @@ Result<ScreenResult> quantize(const Image& image, const Palette& palette,
         image.height() != params.screen_height) {
         return std::unexpected{Error{
             ErrorCode::invalid_dimensions,
-            "Image dimensions must match mode",
+            std::format("Image is {}x{} but mode requires {}x{}",
+                        image.width(), image.height(),
+                        params.screen_width, params.screen_height),
         }};
     }
 

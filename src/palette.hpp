@@ -1,6 +1,6 @@
 #pragma once
 
-#include "color_space.hpp"
+#include "color_space.hpp" // brings in PNG2C64_LUT_CONSTEXPR
 #include "types.hpp"
 #include <array>
 #include <string_view>
@@ -16,7 +16,12 @@ namespace png2c64::palette {
 
 namespace detail {
 
-constexpr auto to_linear_palette(const std::array<std::uint32_t, 16>& hex) {
+#if defined(__GNUC__) && !defined(__clang__)
+constexpr
+#else
+inline
+#endif
+auto to_linear_palette(const std::array<std::uint32_t, 16>& hex) {
     std::array<Color3f, 16> colors{};
     for (std::size_t i = 0; i < 16; ++i) {
         colors[i] = color_space::srgb_hex_to_linear(hex[i]);
@@ -85,6 +90,7 @@ constexpr std::array<std::uint32_t, 16> levy_hex = {{
 
 } // namespace detail
 
+#if defined(__GNUC__) && !defined(__clang__)
 inline constexpr auto pepto_colors = detail::to_linear_palette(detail::pepto_hex);
 inline constexpr auto vice_colors = detail::to_linear_palette(detail::vice_hex);
 inline constexpr auto colodore_colors = detail::to_linear_palette(detail::colodore_hex);
@@ -92,6 +98,15 @@ inline constexpr auto deekay_colors = detail::to_linear_palette(detail::deekay_h
 inline constexpr auto godot_colors = detail::to_linear_palette(detail::godot_hex);
 inline constexpr auto c64wiki_colors = detail::to_linear_palette(detail::c64wiki_hex);
 inline constexpr auto levy_colors = detail::to_linear_palette(detail::levy_hex);
+#else
+inline const auto& pepto_colors    = *new auto(detail::to_linear_palette(detail::pepto_hex));
+inline const auto& vice_colors     = *new auto(detail::to_linear_palette(detail::vice_hex));
+inline const auto& colodore_colors = *new auto(detail::to_linear_palette(detail::colodore_hex));
+inline const auto& deekay_colors   = *new auto(detail::to_linear_palette(detail::deekay_hex));
+inline const auto& godot_colors    = *new auto(detail::to_linear_palette(detail::godot_hex));
+inline const auto& c64wiki_colors  = *new auto(detail::to_linear_palette(detail::c64wiki_hex));
+inline const auto& levy_colors     = *new auto(detail::to_linear_palette(detail::levy_hex));
+#endif
 
 struct PaletteEntry {
     std::string_view name;
@@ -99,7 +114,7 @@ struct PaletteEntry {
 };
 
 // All available palettes, for iteration / lookup
-inline constexpr std::array all_palettes = {
+inline const auto& all_palettes = *new std::array{
     PaletteEntry{"pepto",    pepto_colors},
     PaletteEntry{"vice",     vice_colors},
     PaletteEntry{"colodore", colodore_colors},

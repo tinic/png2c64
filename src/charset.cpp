@@ -7,12 +7,14 @@
 #include <atomic>
 #include <bit>
 #include <cstddef>
+#include "log.hpp"
+
+#include <cstddef>
 #include <cstdio>
 #include <format>
 #include <fstream>
 #include <limits>
 #include <map>
-#include <print>
 #include <set>
 #include <thread>
 #include <vector>
@@ -438,7 +440,7 @@ void merge_to_256(DeduplicatedCharset& dedup, auto dist_func) {
         pair_worker();
     }
 
-    std::println("  Sorting {} pairs...", num_pairs);
+    log_println("  Sorting {} pairs...", num_pairs);
     std::ranges::sort(pairs, {}, &Pair::distance);
 
     std::vector<bool> is_alive(dedup.entries.size(), false);
@@ -465,11 +467,11 @@ void merge_to_256(DeduplicatedCharset& dedup, auto dist_func) {
         ++merges_done;
 
         if (merges_done % 100 == 0 || merges_done == merges_needed) {
-            std::print("\r  Merged {}/{}", merges_done, merges_needed);
-            std::fflush(stdout);
+            log_print("\r  Merged {}/{}", merges_done, merges_needed);
+            log_flush();
         }
     }
-    std::println("");
+    log_println("");
 }
 
 // ---------------------------------------------------------------------------
@@ -683,12 +685,12 @@ void refine_charset(
             }
         }
 
-        std::print("\r  Refine iter {}: {} changes", iter + 1, changes);
-        std::fflush(stdout);
+        log_print("\r  Refine iter {}: {} changes", iter + 1, changes);
+        log_flush();
 
         if (changes == 0) break;
     }
-    std::println("");
+    log_println("");
 }
 
 } // namespace
@@ -721,7 +723,7 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
     const Image* image_ptr = &image_in;
     Image padded;
     if (image_in.height() != padded_h) {
-        std::println("  Padding height {} -> {} (next multiple of 8)",
+        log_println("  Padding height {} -> {} (next multiple of 8)",
                      image_in.height(), padded_h);
         padded = Image(image_in.width(), padded_h);
         for (std::size_t y = 0; y < image_in.height(); ++y)
@@ -757,7 +759,7 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
     }
 
     if (dither_settings.method != dither::Method::none) {
-        std::println("  Dithering...");
+        log_println("  Dithering...");
         dither::apply(image, screen, palette, params, dither_settings);
     }
 
@@ -772,7 +774,7 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
     auto dedup = deduplicate(cells);
     auto unique_before = dedup.entries.size();
 
-    std::println("  {} cells, {} unique patterns", num_cells, unique_before);
+    log_println("  {} cells, {} unique patterns", num_cells, unique_before);
 
     std::size_t empty_count = 0;
     for (auto& e : dedup.entries)
@@ -780,7 +782,7 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
 
     // Phase 5: Merge if > 256 (using perceptual OKLab distance)
     if (unique_before > 256) {
-        std::println("  Merging {} -> 256 patterns...", unique_before);
+        log_println("  Merging {} -> 256 patterns...", unique_before);
 
         if (multicolor) {
             auto pal_lab = precompute_lab(palette);
@@ -851,7 +853,7 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
     // With dithering: only refine assignments + per-cell colors (preserve dither patterns)
     // Without dithering: full k-means including centroid recomputation
     bool has_dither = (dither_settings.method != dither::Method::none);
-    std::println("  Refining charset ({})...",
+    log_println("  Refining charset ({})...",
                  has_dither ? "assignments only, preserving dither"
                             : "full k-means");
     refine_charset(image, palette, multicolor, bg, mc1, mc2,

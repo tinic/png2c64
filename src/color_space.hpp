@@ -41,7 +41,16 @@ constexpr Color3f linear_to_srgb(Color3f linear) noexcept {
     };
 }
 
-// Compile-time LUT: byte value -> linear float
+// LUT: byte value -> linear float
+// constexpr on GCC (constexpr pow), const on clang/emscripten (runtime init)
+#if defined(__GNUC__) && !defined(__clang__)
+#define PNG2C64_LUT_CONSTEXPR constexpr
+#else
+#define PNG2C64_LUT_CONSTEXPR
+#endif
+
+#if defined(__GNUC__) && !defined(__clang__)
+// GCC: fully constexpr LUT computed at compile time
 constexpr auto make_srgb_lut() noexcept {
     std::array<float, 256> lut{};
     for (int i = 0; i < 256; ++i) {
@@ -57,6 +66,25 @@ constexpr Color3f srgb_u8_to_linear(std::uint8_t r, std::uint8_t g,
                                      std::uint8_t b) noexcept {
     return {srgb_lut[r], srgb_lut[g], srgb_lut[b]};
 }
+#else
+// Clang/Emscripten: runtime-initialized LUT via function-local static
+inline const std::array<float, 256>& get_srgb_lut() noexcept {
+    static const auto lut = [] {
+        std::array<float, 256> l{};
+        for (int i = 0; i < 256; ++i)
+            l[static_cast<std::size_t>(i)] =
+                srgb_to_linear(static_cast<float>(i) / 255.0f);
+        return l;
+    }();
+    return lut;
+}
+
+inline Color3f srgb_u8_to_linear(std::uint8_t r, std::uint8_t g,
+                                  std::uint8_t b) noexcept {
+    auto& lut = get_srgb_lut();
+    return {lut[r], lut[g], lut[b]};
+}
+#endif
 
 // Convert sRGB hex (0xRRGGBB) to linear Color3f
 constexpr Color3f srgb_hex_to_linear(std::uint32_t hex) noexcept {

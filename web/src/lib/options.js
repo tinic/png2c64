@@ -1,0 +1,84 @@
+export const MODES = [
+  { value: 'multicolor', label: 'Multicolor (160x200)' },
+  { value: 'hires', label: 'Hi-Res (320x200)' },
+  { value: 'sprite-hi', label: 'Sprite Hi-Res' },
+  { value: 'sprite-mc', label: 'Sprite Multicolor' },
+]
+
+export const PALETTES = [
+  { value: 'pepto', label: 'Pepto' },
+  { value: 'vice', label: 'VICE' },
+  { value: 'colodore', label: 'Colodore' },
+  { value: 'deekay', label: 'Deekay' },
+  { value: 'godot', label: 'Godot' },
+  { value: 'c64wiki', label: 'C64 Wiki' },
+  { value: 'levy', label: 'Levy' },
+]
+
+export const DITHER_METHODS = [
+  { group: 'None', items: [{ value: 'none', label: 'None' }] },
+  { group: 'Ordered (square)', items: [
+    { value: 'bayer4', label: 'Bayer 4x4' },
+    { value: 'bayer8', label: 'Bayer 8x8' },
+  ]},
+  { group: 'Ordered (2:1)', items: [
+    { value: 'checker', label: 'Checker' },
+    { value: 'bayer2x2', label: 'Bayer 2x2' },
+    { value: 'h2x4', label: 'H 2x4' },
+    { value: 'clustered', label: 'Clustered Dot' },
+  ]},
+  { group: 'Lines', items: [
+    { value: 'line2', label: 'Line 2' },
+    { value: 'line-checker', label: 'Line Checker' },
+    { value: 'line4', label: 'Line 4' },
+    { value: 'line8', label: 'Line 8' },
+  ]},
+  { group: 'Error Diffusion', items: [
+    { value: 'fs', label: 'Floyd-Steinberg' },
+    { value: 'atkinson', label: 'Atkinson' },
+    { value: 'sierra', label: 'Sierra Lite' },
+  ]},
+  { group: 'Error Diffusion (2:1)', items: [
+    { value: 'fs-wide', label: 'F-S Wide' },
+    { value: 'jarvis', label: 'Jarvis' },
+  ]},
+  { group: 'Error Diffusion (line)', items: [
+    { value: 'line-fs', label: 'Line F-S' },
+  ]},
+]
+
+export const SLIDERS = [
+  { key: 'gamma',          label: 'Gamma',      min: 0.1, max: 5.0, step: 0.05, default: 1.0  },
+  { key: 'brightness',     label: 'Brightness',  min: -1,  max: 1.0, step: 0.05, default: 0.0  },
+  { key: 'contrast',       label: 'Contrast',    min: 0,   max: 3.0, step: 0.05, default: 1.0  },
+  { key: 'saturation',     label: 'Saturation',  min: 0,   max: 3.0, step: 0.05, default: 1.0  },
+  { key: 'ditherStrength', label: 'Strength',    min: 0,   max: 3.0, step: 0.05, default: 1.0  },
+  { key: 'errorClamp',     label: 'Error Clamp', min: 0,   max: 2.0, step: 0.05, default: 0.8  },
+  { key: 'adaptive',       label: 'Adaptive',    min: 0,   max: 1.0, step: 0.05, default: 0.0  },
+]
+
+export function defaultOptions() {
+  const opts = {
+    mode: 'multicolor',
+    palette: 'pepto',
+    dither: 'checker',
+    serpentine: true,
+    width: 0,
+    height: 0,
+    spritesX: 1,
+    spritesY: 1,
+  }
+  for (const s of SLIDERS) opts[s.key] = s.default
+  return opts
+}
+
+export function isSpriteMode(mode) {
+  return mode === 'sprite-hi' || mode === 'sprite-mc'
+}
+
+// Compute width/height from sprite grid for the WASM API
+export function spriteGridDimensions(mode, sx, sy) {
+  if (mode === 'sprite-hi')  return { width: sx * 24, height: sy * 21 }
+  if (mode === 'sprite-mc')  return { width: sx * 12, height: sy * 21 }
+  return { width: 0, height: 0 }
+}
