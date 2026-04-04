@@ -9,11 +9,14 @@
 #include "vic2.hpp"
 
 #include <array>
+#include <cstdio>
 #include <cstdlib>
 #include <optional>
 #include <print>
 #include <string>
 #include <string_view>
+#include <termios.h>
+#include <unistd.h>
 #include <vector>
 
 namespace {
@@ -38,6 +41,7 @@ struct Config {
     std::size_t sprites_y = 1;
     bool charset = false;
     bool charset_mc = false;
+    bool interactive = false;
 };
 
 void print_usage() {
@@ -66,7 +70,8 @@ void print_usage() {
         "  --sprites-y <int>              Sprite sheet rows (default: 1)\n"
         "  --gallery <param>               Preview parameter variations in terminal\n"
         "     dither, brightness, contrast, saturation, gamma,\n"
-        "     error-clamp, dither-strength");
+        "     error-clamp, dither-strength\n"
+        "  --interactive                    Interactive mode (live parameter tuning)");
 }
 
 Result<Config> parse_args(int argc, char* argv[]) {
@@ -83,6 +88,10 @@ Result<Config> parse_args(int argc, char* argv[]) {
 
         if (arg == "--no-serpentine") {
             config.dither_settings.serpentine = false;
+            continue;
+        }
+        if (arg == "--interactive") {
+            config.interactive = true;
             continue;
         }
 
@@ -162,8 +171,8 @@ Result<Config> parse_args(int argc, char* argv[]) {
     if (config.input_path.empty()) {
         return std::unexpected{Error{ErrorCode::invalid_dimensions, "Input path required"}};
     }
-    if (config.gallery.empty() && config.output_path.empty()) {
-        return std::unexpected{Error{ErrorCode::invalid_dimensions, "Output path required (or use --gallery <param>)"}};
+    if (config.gallery.empty() && !config.interactive && config.output_path.empty()) {
+        return std::unexpected{Error{ErrorCode::invalid_dimensions, "Output path required (or use --gallery / --interactive)"}};
     }
 
     return config;
@@ -562,6 +571,223 @@ bool run_gallery(const std::string& gallery_name,
     return false;
 }
 
+// ---------------------------------------------------------------------------
+// Interactive mode
+// ---------------------------------------------------------------------------
+
+struct RawTerminal {
+    termios original{};
+    RawTerminal() {
+        tcgetattr(STDIN_FILENO, &original);
+        termios raw = original;
+        raw.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
+        raw.c_cc[VMIN] = 1;
+        raw.c_cc[VTIME] = 0;
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+        std::print("\033[?25l"); // hide cursor
+    }
+    ~RawTerminal() {
+        std::print("\033[?25h"); // show cursor
+        tcsetattr(STDIN_FILENO, TCSAFLUSH, &original);
+    }
+};
+
+// Short dither names for display
+constexpr std::array<std::string_view, 17> dither_names = {
+    "none", "bayer4", "bayer8", "checker", "bayer2x2", "h2x4",
+    "clustered", "line2", "line-check", "line4", "line8",
+    "fs", "atkinson", "sierra", "fs-wide", "jarvis", "line-fs",
+};
+
+constexpr std::array<dither::Method, 17> dither_methods = {
+    dither::Method::none, dither::Method::bayer4x4, dither::Method::bayer8x8,
+    dither::Method::checker, dither::Method::bayer2x2, dither::Method::h2x4,
+    dither::Method::clustered_dot, dither::Method::line2,
+    dither::Method::line_checker, dither::Method::line4, dither::Method::line8,
+    dither::Method::floyd_steinberg, dither::Method::atkinson,
+    dither::Method::sierra_lite, dither::Method::fs_wide,
+    dither::Method::jarvis, dither::Method::line_fs,
+};
+
+std::size_t dither_index(dither::Method m) {
+    for (std::size_t i = 0; i < dither_methods.size(); ++i)
+        if (dither_methods[i] == m) return i;
+    return 0;
+}
+
+std::size_t palette_index(std::string_view name) {
+    for (std::size_t i = 0; i < palette::all_palettes.size(); ++i)
+        if (palette::all_palettes[i].name == name) return i;
+    return 0;
+}
+
+void run_interactive(const Image& scaled_image, Config& config,
+                     vic2::Mode mode, const vic2::ModeParams& params) {
+
+    auto pal_idx = palette_index(config.palette_name);
+    auto dit_idx = dither_index(config.dither_settings.method);
+    auto& pp = config.preprocess;
+    auto& ds = config.dither_settings;
+    bool is_charset = config.charset;
+    bool is_charset_mc = config.charset_mc;
+
+    RawTerminal term;
+
+    auto refresh = [&] {
+        auto pal = palette::by_name(
+            palette::all_palettes[pal_idx].name);
+        ds.method = dither_methods[dit_idx];
+        config.palette_name = std::string(palette::all_palettes[pal_idx].name);
+
+        // Run pipeline
+        auto img = scaled_image;
+        preprocess::apply(img, pp);
+        preprocess::match_palette_range(img, pal);
+
+        Image output;
+        if (is_charset) {
+            auto result = charset::convert(img, pal, is_charset_mc, ds);
+            if (!result) return;
+            output = charset::render(*result, pal);
+        } else {
+            auto screen = quantize::quantize(img, pal, mode, params);
+            if (!screen) return;
+            if (ds.method != dither::Method::none)
+                dither::apply(img, *screen, pal, params, ds);
+            output = render_screen(*screen, pal, params);
+        }
+
+        // Clear screen and draw UI
+        std::print("\033[2J\033[H");
+
+        // Panel
+        std::println("\033[1m png2c64 interactive \033[0m");
+        std::println("");
+        std::println(" \033[33mp/P\033[0m palette    \033[1m{:<12}\033[0m"
+                     "  \033[33md/D\033[0m dither   \033[1m{}\033[0m",
+                     config.palette_name, dither_names[dit_idx]);
+        std::println(" \033[33mg/G\033[0m gamma      \033[1m{:<12.2f}\033[0m"
+                     "  \033[33ms/S\033[0m strength \033[1m{:.2f}\033[0m",
+                     pp.gamma, ds.strength);
+        std::println(" \033[33mb/B\033[0m bright     \033[1m{:<12.2f}\033[0m"
+                     "  \033[33mc/C\033[0m contrast \033[1m{:.2f}\033[0m",
+                     pp.brightness, pp.contrast);
+        std::println(" \033[33mt/T\033[0m saturation \033[1m{:<12.2f}\033[0m"
+                     "  \033[33me/E\033[0m errclamp \033[1m{:.2f}\033[0m",
+                     pp.saturation, ds.error_clamp);
+        std::println(" \033[33m x \033[0m serpentine \033[1m{:<12}\033[0m"
+                     "  \033[33m r \033[0m reset  \033[33m w \033[0m save  \033[33m q \033[0m quit",
+                     ds.serpentine ? "on" : "off");
+        std::println("");
+
+        iterm2_display_image(output, 3);
+        std::fflush(stdout);
+    };
+
+    refresh();
+
+    constexpr float step = 0.05f;
+    constexpr float gamma_factor = 1.15f;
+
+    while (true) {
+        char ch;
+        if (read(STDIN_FILENO, &ch, 1) != 1) break;
+
+        switch (ch) {
+        case 'q': return;
+
+        // Palette
+        case 'p':
+            pal_idx = (pal_idx + 1) % palette::all_palettes.size();
+            break;
+        case 'P':
+            pal_idx = (pal_idx + palette::all_palettes.size() - 1) %
+                      palette::all_palettes.size();
+            break;
+
+        // Dither method
+        case 'd':
+            dit_idx = (dit_idx + 1) % dither_methods.size();
+            break;
+        case 'D':
+            dit_idx = (dit_idx + dither_methods.size() - 1) %
+                      dither_methods.size();
+            break;
+
+        // Gamma (multiplicative)
+        case 'g': pp.gamma = std::min(pp.gamma * gamma_factor, 8.0f); break;
+        case 'G': pp.gamma = std::max(pp.gamma / gamma_factor, 0.1f); break;
+
+        // Dither strength
+        case 's': ds.strength = std::min(ds.strength + step, 3.0f); break;
+        case 'S': ds.strength = std::max(ds.strength - step, 0.0f); break;
+
+        // Brightness
+        case 'b': pp.brightness = std::min(pp.brightness + step, 1.0f); break;
+        case 'B': pp.brightness = std::max(pp.brightness - step, -1.0f); break;
+
+        // Contrast
+        case 'c': pp.contrast = std::min(pp.contrast + step, 3.0f); break;
+        case 'C': pp.contrast = std::max(pp.contrast - step, 0.0f); break;
+
+        // Saturation
+        case 't': pp.saturation = std::min(pp.saturation + step, 3.0f); break;
+        case 'T': pp.saturation = std::max(pp.saturation - step, 0.0f); break;
+
+        // Error clamp
+        case 'e': ds.error_clamp = std::min(ds.error_clamp + step, 3.0f); break;
+        case 'E': ds.error_clamp = std::max(ds.error_clamp - step, 0.05f); break;
+
+        // Serpentine toggle
+        case 'x': ds.serpentine = !ds.serpentine; break;
+
+        // Reset
+        case 'r':
+            pp = preprocess::Settings{};
+            ds = dither::Settings{};
+            pal_idx = 0;
+            dit_idx = dither_index(ds.method);
+            break;
+
+        // Save
+        case 'w':
+            if (!config.output_path.empty()) {
+                auto pal = palette::by_name(config.palette_name);
+                auto img = scaled_image;
+                preprocess::apply(img, pp);
+                preprocess::match_palette_range(img, pal);
+                if (is_charset) {
+                    auto result = charset::convert(img, pal, is_charset_mc, ds);
+                    if (result) {
+                        // Derive C identifier from path
+                        auto stem = config.output_path;
+                        auto slash = stem.find_last_of('/');
+                        if (slash != std::string::npos) stem = stem.substr(slash + 1);
+                        auto dot = stem.find_last_of('.');
+                        if (dot != std::string::npos) stem = stem.substr(0, dot);
+                        for (auto& c : stem)
+                            if (!std::isalnum(static_cast<unsigned char>(c))) c = '_';
+                        charset::write_header(config.output_path, *result, stem);
+                    }
+                } else {
+                    auto screen = quantize::quantize(img, pal, mode, params);
+                    if (screen) {
+                        if (ds.method != dither::Method::none)
+                            dither::apply(img, *screen, pal, params, ds);
+                        auto out = render_screen(*screen, pal, params);
+                        png_io::save(config.output_path, out);
+                    }
+                }
+            }
+            break;
+
+        default: continue; // unknown key, don't refresh
+        }
+
+        refresh();
+    }
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -615,8 +841,16 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // Keep pre-preprocessed copy for galleries
+        // Keep pre-preprocessed copy for galleries/interactive
         auto scaled_image = *image;
+
+        // Interactive mode
+        if (config->interactive) {
+            vic2::ModeParams dummy_params{};
+            run_interactive(scaled_image, *config,
+                            vic2::Mode::multicolor, dummy_params);
+            return 0;
+        }
 
         // Preprocess
         preprocess::apply(*image, config->preprocess);
@@ -710,8 +944,14 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // Keep a copy of the scaled image before preprocessing (for galleries)
+    // Keep a copy of the scaled image before preprocessing
     auto scaled_image = *image;
+
+    // Interactive mode
+    if (config->interactive) {
+        run_interactive(scaled_image, *config, config->mode, params);
+        return 0;
+    }
 
     // Get palette
     auto pal = palette::by_name(config->palette_name);

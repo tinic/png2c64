@@ -27,7 +27,8 @@ auto precompute_oklab(const Palette& palette) {
 // Color-major layout for cache-friendly vectorized inner loops.
 // ---------------------------------------------------------------------------
 
-static constexpr std::size_t max_pixels_per_cell = 64; // hires 8x8
+// Max pixels per cell: sprite hires = 24x21 = 504
+static constexpr std::size_t max_pixels_per_cell = 504;
 static constexpr std::size_t max_palette = 16;
 
 struct CellDistTable {

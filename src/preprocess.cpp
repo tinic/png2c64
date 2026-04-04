@@ -9,31 +9,29 @@
 namespace png2c64::preprocess {
 
 void apply(Image& image, const Settings& s) {
-    constexpr float lw_r = 0.2126f;
-    constexpr float lw_g = 0.7152f;
-    constexpr float lw_b = 0.0722f;
-
     for (auto& pixel : image.pixels()) {
+        // 1. Gamma (in linear space, before anything else)
         if (s.gamma != 1.0f) {
             pixel.r = std::pow(std::max(pixel.r, 0.0f), s.gamma);
             pixel.g = std::pow(std::max(pixel.g, 0.0f), s.gamma);
             pixel.b = std::pow(std::max(pixel.b, 0.0f), s.gamma);
         }
 
-        pixel.r += s.brightness;
-        pixel.g += s.brightness;
-        pixel.b += s.brightness;
+        // 2-4. Brightness, contrast, saturation in OKLab space
+        // where L is perceptually uniform and 0.5 is actual mid-grey.
+        auto lab = color_space::linear_to_oklab(pixel);
 
-        pixel.r = (pixel.r - 0.5f) * s.contrast + 0.5f;
-        pixel.g = (pixel.g - 0.5f) * s.contrast + 0.5f;
-        pixel.b = (pixel.b - 0.5f) * s.contrast + 0.5f;
+        // Brightness: additive shift on L
+        lab.L += s.brightness;
 
-        float lum = lw_r * pixel.r + lw_g * pixel.g + lw_b * pixel.b;
-        pixel.r = lum + s.saturation * (pixel.r - lum);
-        pixel.g = lum + s.saturation * (pixel.g - lum);
-        pixel.b = lum + s.saturation * (pixel.b - lum);
+        // Contrast: scale around L=0.5 (perceptual mid-grey)
+        lab.L = (lab.L - 0.5f) * s.contrast + 0.5f;
 
-        pixel = pixel.clamped();
+        // Saturation: scale chroma (a, b) around zero
+        lab.a *= s.saturation;
+        lab.b *= s.saturation;
+
+        pixel = color_space::oklab_to_linear(lab).clamped();
     }
 }
 
