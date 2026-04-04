@@ -72,6 +72,7 @@ void print_usage() {
         "     Lines:   line2, line-checker, line4, line8, line-fs\n"
         "  --dither-strength <float>       Dithering strength 0.0-2.0 (default: 1.0)\n"
         "  --error-clamp <float>           Max error per channel 0.1-2.0 (default: 0.8)\n"
+        "  --adaptive <float>              Contrast-adaptive diffusion 0.0-1.0 (default: 0.0)\n"
         "  --no-serpentine                  Disable serpentine scanning\n"
         "  --brightness <float>            Brightness -1.0 to 1.0 (default: 0.0)\n"
         "  --contrast <float>              Contrast 0.0-2.0 (default: 1.0)\n"
@@ -83,7 +84,7 @@ void print_usage() {
         "  --sprites-y <int>              Sprite sheet rows (default: 1)\n"
         "  --gallery <param>               Preview parameter variations in terminal\n"
         "     dither, brightness, contrast, saturation, gamma,\n"
-        "     error-clamp, dither-strength\n"
+        "     error-clamp, dither-strength, adaptive\n"
         "  --interactive                    Interactive mode (live parameter tuning)");
 }
 
@@ -155,6 +156,8 @@ Result<Config> parse_args(int argc, char* argv[]) {
                 config.dither_settings.strength = std::stof(std::string(val));
             } else if (arg == "--error-clamp") {
                 config.dither_settings.error_clamp = std::stof(std::string(val));
+            } else if (arg == "--adaptive") {
+                config.dither_settings.adaptive = std::stof(std::string(val));
             } else if (arg == "--brightness") {
                 config.preprocess.brightness = std::stof(std::string(val));
             } else if (arg == "--contrast") {
@@ -433,6 +436,17 @@ constexpr std::array dither_strength_gallery = {
     FloatGalleryEntry{2.00f, "dither-strength = 2.00"},
 };
 
+// Adaptive: 0.0 .. 1.0
+constexpr std::array adaptive_gallery = {
+    FloatGalleryEntry{0.00f, "adaptive = 0.00 (off)"},
+    FloatGalleryEntry{0.15f, "adaptive = 0.15"},
+    FloatGalleryEntry{0.30f, "adaptive = 0.30"},
+    FloatGalleryEntry{0.50f, "adaptive = 0.50"},
+    FloatGalleryEntry{0.70f, "adaptive = 0.70"},
+    FloatGalleryEntry{0.85f, "adaptive = 0.85"},
+    FloatGalleryEntry{1.00f, "adaptive = 1.00 (full)"},
+};
+
 // Dither gallery for bitmap modes: only re-runs dithering (fast)
 void run_dither_gallery_bitmap(const Image& image,
                                const quantize::ScreenResult& screen,
@@ -582,6 +596,15 @@ bool run_gallery(const std::string& gallery_name,
         return true;
     }
 
+    if (gallery_name == "adaptive") {
+        run_float_gallery("Adaptive", adaptive_gallery,
+            scaled_image, config, pal, params,
+            [](preprocess::Settings&, dither::Settings& ds, float v) {
+                ds.adaptive = v;
+            });
+        return true;
+    }
+
     return false;
 }
 
@@ -706,9 +729,11 @@ void run_interactive(const Image& scaled_image, Config& config,
         std::println(" \033[33mt/T\033[0m saturation \033[1m{:<12.2f}\033[0m"
                      "  \033[33me/E\033[0m errclamp \033[1m{:<12.2f}\033[0m\033[K",
                      pp.saturation, ds.error_clamp);
-        std::println(" \033[33m x \033[0m serpentine \033[1m{:<12}\033[0m"
-                     "  \033[33m r \033[0m reset  \033[33m w \033[0m save  \033[33m q \033[0m quit\033[K",
-                     ds.serpentine ? "on" : "off");
+        std::println(" \033[33ma/A\033[0m adaptive   \033[1m{:<12.2f}\033[0m"
+                     "  \033[33m x \033[0m serpentine \033[1m{}\033[0m\033[K",
+                     ds.adaptive, ds.serpentine ? "on" : "off");
+        std::println(" \033[33m r \033[0m reset      \033[33m w \033[0m save"
+                     "      \033[33m q \033[0m quit\033[K");
         std::println("\033[K");
 
         iterm2_display_image(output, 3);
@@ -769,6 +794,10 @@ void run_interactive(const Image& scaled_image, Config& config,
         // Error clamp
         case 'e': ds.error_clamp = std::min(ds.error_clamp + step, 3.0f); break;
         case 'E': ds.error_clamp = std::max(ds.error_clamp - step, 0.05f); break;
+
+        // Adaptive
+        case 'a': ds.adaptive = std::min(ds.adaptive + step, 1.0f); break;
+        case 'A': ds.adaptive = std::max(ds.adaptive - step, 0.0f); break;
 
         // Serpentine toggle
         case 'x': ds.serpentine = !ds.serpentine; break;

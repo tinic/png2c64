@@ -42,6 +42,7 @@ struct Settings {
     float strength = 1.0f;    // 0.0 = no dithering, 1.0 = full
     float error_clamp = 0.8f; // max error magnitude per channel (linear)
     bool serpentine = true;    // alternate scan direction per row
+    float adaptive = 0.0f;    // 0.0 = off, 1.0 = full contrast-adaptive diffusion
 };
 
 void apply(const Image& image, quantize::ScreenResult& result,

@@ -301,11 +301,40 @@ struct DiffusionEntry {
     float weight;
 };
 
+// Compute per-pixel local contrast in OKLab L channel.
+// Returns values in [0, 1] where 0 = flat, 1 = high contrast.
+std::vector<float> compute_contrast_map(
+    const std::vector<OKLab>& image_lab,
+    std::size_t w, std::size_t h) {
+
+    constexpr float threshold = 0.15f; // L difference for "high contrast"
+    std::vector<float> contrast(w * h);
+
+    for (std::size_t y = 0; y < h; ++y) {
+        for (std::size_t x = 0; x < w; ++x) {
+            float L = image_lab[y * w + x].L;
+            float grad = 0.0f;
+            float count = 0.0f;
+
+            if (x > 0)     { grad += std::abs(L - image_lab[y*w + x-1].L); ++count; }
+            if (x+1 < w)   { grad += std::abs(L - image_lab[y*w + x+1].L); ++count; }
+            if (y > 0)     { grad += std::abs(L - image_lab[(y-1)*w + x].L); ++count; }
+            if (y+1 < h)   { grad += std::abs(L - image_lab[(y+1)*w + x].L); ++count; }
+
+            grad /= count;
+            contrast[y * w + x] = std::min(grad / threshold, 1.0f);
+        }
+    }
+
+    return contrast;
+}
+
 void apply_error_diffusion(
     const Image& image, quantize::ScreenResult& result,
     const Palette& palette, const vic2::ModeParams& params,
     float strength, float error_clamp_val,
-    bool serpentine, std::span<const DiffusionEntry> kernel) {
+    bool serpentine, float adaptive,
+    std::span<const DiffusionEntry> kernel) {
 
     auto w = params.screen_width;
     auto h = params.screen_height;
@@ -320,6 +349,12 @@ void apply_error_diffusion(
 
     auto palette_lab = precompute_palette_lab(palette);
 
+    // Precompute contrast map for adaptive diffusion
+    std::vector<float> contrast_map;
+    if (adaptive > 0.0f) {
+        contrast_map = compute_contrast_map(image_lab, w, h);
+    }
+
     std::vector<OKLab> error_buf(w * h);
 
     for (std::size_t y = 0; y < h; ++y) {
@@ -331,9 +366,17 @@ void apply_error_diffusion(
 
             auto [cell, pi] = get_pixel_cell(result, x, y, params, cx);
 
-            auto adjusted = oklab_add(
-                image_lab[buf_idx],
-                oklab_clamp(error_buf[buf_idx], error_clamp_val));
+            // Adaptive: scale incoming error by inverse local contrast.
+            // High detail → less error accepted → sharper.
+            // Flat areas → full error → smoother gradients.
+            auto clamped_error = oklab_clamp(error_buf[buf_idx], error_clamp_val);
+            if (adaptive > 0.0f) {
+                float detail = contrast_map[buf_idx];
+                float scale = 1.0f - adaptive * detail;
+                clamped_error = oklab_scale(clamped_error, scale);
+            }
+
+            auto adjusted = oklab_add(image_lab[buf_idx], clamped_error);
 
             auto [idx, chosen_lab] = find_nearest_oklab(
                 adjusted, cell->cell_colors, palette_lab);
@@ -506,37 +549,42 @@ void apply(const Image& image, quantize::ScreenResult& result,
     case Method::floyd_steinberg:
         apply_error_diffusion(image, result, palette, params,
                               settings.strength, settings.error_clamp,
-                              settings.serpentine, floyd_steinberg_kernel);
+                              settings.serpentine, settings.adaptive,
+                              floyd_steinberg_kernel);
         return;
     case Method::atkinson:
         apply_error_diffusion(image, result, palette, params,
                               settings.strength, settings.error_clamp,
-                              settings.serpentine, atkinson_kernel);
+                              settings.serpentine, settings.adaptive,
+                              atkinson_kernel);
         return;
     case Method::sierra_lite:
         apply_error_diffusion(image, result, palette, params,
                               settings.strength, settings.error_clamp,
-                              settings.serpentine, sierra_lite_kernel);
+                              settings.serpentine, settings.adaptive,
+                              sierra_lite_kernel);
         return;
 
     // 2:1 error diffusion
     case Method::fs_wide:
         apply_error_diffusion(image, result, palette, params,
                               settings.strength, settings.error_clamp,
-                              settings.serpentine,
+                              settings.serpentine, settings.adaptive,
                               fs_wide_kernel);
         return;
     case Method::jarvis:
         apply_error_diffusion(image, result, palette, params,
                               settings.strength, settings.error_clamp,
-                              settings.serpentine, jarvis_kernel);
+                              settings.serpentine, settings.adaptive,
+                              jarvis_kernel);
         return;
 
     // Horizontal line error diffusion
     case Method::line_fs:
         apply_error_diffusion(image, result, palette, params,
                               settings.strength, settings.error_clamp,
-                              settings.serpentine, line_fs_kernel);
+                              settings.serpentine, settings.adaptive,
+                              line_fs_kernel);
         return;
     }
 }
