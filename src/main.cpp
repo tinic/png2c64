@@ -15,6 +15,7 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <csignal>
 #include <termios.h>
 #include <unistd.h>
 #include <vector>
@@ -575,20 +576,34 @@ bool run_gallery(const std::string& gallery_name,
 // Interactive mode
 // ---------------------------------------------------------------------------
 
+// Global so the signal handler can restore terminal state
+termios g_original_termios{};
+
+void restore_terminal([[maybe_unused]] int sig) {
+    std::print("\033[?25h"); // show cursor
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &g_original_termios);
+    if (sig) {
+        std::signal(sig, SIG_DFL);
+        std::raise(sig);
+    }
+}
+
 struct RawTerminal {
-    termios original{};
     RawTerminal() {
-        tcgetattr(STDIN_FILENO, &original);
-        termios raw = original;
+        tcgetattr(STDIN_FILENO, &g_original_termios);
+        termios raw = g_original_termios;
         raw.c_lflag &= static_cast<tcflag_t>(~(ICANON | ECHO));
         raw.c_cc[VMIN] = 1;
         raw.c_cc[VTIME] = 0;
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
         std::print("\033[?25l"); // hide cursor
+        std::signal(SIGINT, restore_terminal);
+        std::signal(SIGTERM, restore_terminal);
     }
     ~RawTerminal() {
-        std::print("\033[?25h"); // show cursor
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &original);
+        std::signal(SIGINT, SIG_DFL);
+        std::signal(SIGTERM, SIG_DFL);
+        restore_terminal(0);
     }
 };
 
@@ -661,25 +676,25 @@ void run_interactive(const Image& scaled_image, Config& config,
         // Move cursor home and overwrite in place (no flicker)
         std::print("\033[H");
 
-        // Panel
-        std::println("\033[1m png2c64 interactive \033[0m");
-        std::println("");
+        // Panel (each line ends with \033[K to clear stale characters)
+        std::println("\033[1m png2c64 interactive \033[0m\033[K");
+        std::println("\033[K");
         std::println(" \033[33mp/P\033[0m palette    \033[1m{:<12}\033[0m"
-                     "  \033[33md/D\033[0m dither   \033[1m{}\033[0m",
+                     "  \033[33md/D\033[0m dither   \033[1m{:<12}\033[0m\033[K",
                      config.palette_name, dither_names[dit_idx]);
         std::println(" \033[33mg/G\033[0m gamma      \033[1m{:<12.2f}\033[0m"
-                     "  \033[33ms/S\033[0m strength \033[1m{:.2f}\033[0m",
+                     "  \033[33ms/S\033[0m strength \033[1m{:<12.2f}\033[0m\033[K",
                      pp.gamma, ds.strength);
         std::println(" \033[33mb/B\033[0m bright     \033[1m{:<12.2f}\033[0m"
-                     "  \033[33mc/C\033[0m contrast \033[1m{:.2f}\033[0m",
+                     "  \033[33mc/C\033[0m contrast \033[1m{:<12.2f}\033[0m\033[K",
                      pp.brightness, pp.contrast);
         std::println(" \033[33mt/T\033[0m saturation \033[1m{:<12.2f}\033[0m"
-                     "  \033[33me/E\033[0m errclamp \033[1m{:.2f}\033[0m",
+                     "  \033[33me/E\033[0m errclamp \033[1m{:<12.2f}\033[0m\033[K",
                      pp.saturation, ds.error_clamp);
         std::println(" \033[33m x \033[0m serpentine \033[1m{:<12}\033[0m"
-                     "  \033[33m r \033[0m reset  \033[33m w \033[0m save  \033[33m q \033[0m quit",
+                     "  \033[33m r \033[0m reset  \033[33m w \033[0m save  \033[33m q \033[0m quit\033[K",
                      ds.serpentine ? "on" : "off");
-        std::println("");
+        std::println("\033[K");
 
         iterm2_display_image(output, 3);
         std::print("\033[J"); // clear any stale content below
