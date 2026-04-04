@@ -14,31 +14,75 @@ Built for C64 demo scene production. All color operations use OKLab perceptual c
 
 ## Dither Modes
 
-All 17 dither modes shown with `--gamma 1 --dither-strength 2 --error-clamp 0.2`:
+All 17 modes shown with `--gamma 1 --dither-strength 2 --error-clamp 0.2`. Click to expand:
 
-**Ordered -- square pixel:**
+<details open><summary><b>none</b> — no dithering</summary>
+<img src="examples/dither_gallery/none.png" width="640">
+</details>
 
-| none | bayer4 | bayer8 |
-|---|---|---|
-| ![none](examples/dither_gallery/none.png) | ![bayer4](examples/dither_gallery/bayer4.png) | ![bayer8](examples/dither_gallery/bayer8.png) |
+<details><summary><b>bayer4</b> — 4x4 ordered</summary>
+<img src="examples/dither_gallery/bayer4.png" width="640">
+</details>
 
-**Ordered -- 2:1 multicolor:**
+<details><summary><b>bayer8</b> — 8x8 ordered</summary>
+<img src="examples/dither_gallery/bayer8.png" width="640">
+</details>
 
-| checker | bayer2x2 | h2x4 | clustered |
-|---|---|---|---|
-| ![checker](examples/dither_gallery/checker.png) | ![bayer2x2](examples/dither_gallery/bayer2x2.png) | ![h2x4](examples/dither_gallery/h2x4.png) | ![clustered](examples/dither_gallery/clustered.png) |
+<details><summary><b>checker</b> — 2:1 checkerboard</summary>
+<img src="examples/dither_gallery/checker.png" width="640">
+</details>
 
-**Ordered -- horizontal lines:**
+<details><summary><b>bayer2x2</b> — 2:1 minimal ordered</summary>
+<img src="examples/dither_gallery/bayer2x2.png" width="640">
+</details>
 
-| line2 | line-checker | line4 | line8 |
-|---|---|---|---|
-| ![line2](examples/dither_gallery/line2.png) | ![line-checker](examples/dither_gallery/line-checker.png) | ![line4](examples/dither_gallery/line4.png) | ![line8](examples/dither_gallery/line8.png) |
+<details><summary><b>h2x4</b> — 2:1 horizontal-biased</summary>
+<img src="examples/dither_gallery/h2x4.png" width="640">
+</details>
 
-**Error diffusion:**
+<details><summary><b>clustered</b> — 2:1 clustered dot</summary>
+<img src="examples/dither_gallery/clustered.png" width="640">
+</details>
 
-| fs | atkinson | sierra | fs-wide | jarvis | line-fs |
-|---|---|---|---|---|---|
-| ![fs](examples/dither_gallery/fs.png) | ![atkinson](examples/dither_gallery/atkinson.png) | ![sierra](examples/dither_gallery/sierra.png) | ![fs-wide](examples/dither_gallery/fs-wide.png) | ![jarvis](examples/dither_gallery/jarvis.png) | ![line-fs](examples/dither_gallery/line-fs.png) |
+<details><summary><b>line2</b> — horizontal 2-level</summary>
+<img src="examples/dither_gallery/line2.png" width="640">
+</details>
+
+<details><summary><b>line-checker</b> — line-biased checker</summary>
+<img src="examples/dither_gallery/line-checker.png" width="640">
+</details>
+
+<details><summary><b>line4</b> — horizontal 4-level</summary>
+<img src="examples/dither_gallery/line4.png" width="640">
+</details>
+
+<details><summary><b>line8</b> — horizontal 8-level</summary>
+<img src="examples/dither_gallery/line8.png" width="640">
+</details>
+
+<details><summary><b>fs</b> — Floyd-Steinberg</summary>
+<img src="examples/dither_gallery/fs.png" width="640">
+</details>
+
+<details><summary><b>atkinson</b> — Atkinson (75% error)</summary>
+<img src="examples/dither_gallery/atkinson.png" width="640">
+</details>
+
+<details><summary><b>sierra</b> — Sierra Lite</summary>
+<img src="examples/dither_gallery/sierra.png" width="640">
+</details>
+
+<details><summary><b>fs-wide</b> — 2:1 Floyd-Steinberg</summary>
+<img src="examples/dither_gallery/fs-wide.png" width="640">
+</details>
+
+<details><summary><b>jarvis</b> — Jarvis-Judice-Ninke</summary>
+<img src="examples/dither_gallery/jarvis.png" width="640">
+</details>
+
+<details><summary><b>line-fs</b> — vertical error diffusion</summary>
+<img src="examples/dither_gallery/line-fs.png" width="640">
+</details>
 
 ## Features
 
