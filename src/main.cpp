@@ -24,6 +24,18 @@ namespace {
 
 using namespace png2c64;
 
+// Build a ThresholdFn for dither-aware quantization (ordered dithers only)
+quantize::ThresholdFn make_threshold_fn(const dither::Settings& ds) {
+    if (dither::is_ordered(ds.method) && ds.method != dither::Method::none) {
+        auto method = ds.method;
+        auto strength = ds.strength;
+        return [method, strength](std::size_t x, std::size_t y) {
+            return dither::ordered_threshold(method, x, y) * strength;
+        };
+    }
+    return {};
+}
+
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -288,7 +300,8 @@ void run_pipeline_and_display(const Image& scaled_image,
     preprocess::apply(img, pp);
     preprocess::match_palette_range(img, pal);
 
-    auto screen = quantize::quantize(img, pal, mode, params);
+    auto tfn = make_threshold_fn(ds);
+    auto screen = quantize::quantize(img, pal, mode, params, tfn, ds.strength);
     if (!screen) return;
 
     if (ds.method != dither::Method::none) {
@@ -666,7 +679,9 @@ void run_interactive(const Image& scaled_image, Config& config,
             if (!result) return;
             output = charset::render(*result, pal);
         } else {
-            auto screen = quantize::quantize(img, pal, mode, params);
+            auto tfn = make_threshold_fn(ds);
+            auto screen = quantize::quantize(img, pal, mode, params,
+                                              tfn, ds.strength);
             if (!screen) return;
             if (ds.method != dither::Method::none)
                 dither::apply(img, *screen, pal, params, ds);
@@ -787,7 +802,9 @@ void run_interactive(const Image& scaled_image, Config& config,
                         charset::write_header(config.output_path, *result, stem);
                     }
                 } else {
-                    auto screen = quantize::quantize(img, pal, mode, params);
+                    auto tfn = make_threshold_fn(ds);
+                    auto screen = quantize::quantize(img, pal, mode, params,
+                                                      tfn, ds.strength);
                     if (screen) {
                         if (ds.method != dither::Method::none)
                             dither::apply(img, *screen, pal, params, ds);
@@ -997,7 +1014,9 @@ int main(int argc, char* argv[]) {
     }
 
     std::println("Quantizing ({}, brute force)...", mode_name);
-    auto screen = quantize::quantize(*image, pal, config->mode, params);
+    auto tfn = make_threshold_fn(config->dither_settings);
+    auto screen = quantize::quantize(*image, pal, config->mode, params,
+                                     tfn, config->dither_settings.strength);
     if (!screen) {
         std::println(stderr, "Error: {}", screen.error().message);
         return 1;

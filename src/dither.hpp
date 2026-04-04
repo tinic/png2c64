@@ -48,4 +48,23 @@ void apply(const Image& image, quantize::ScreenResult& result,
            const Palette& palette, const vic2::ModeParams& params,
            const Settings& settings);
 
+// Returns true if the method is an ordered (non-error-diffusion) method.
+constexpr bool is_ordered(Method m) noexcept {
+    switch (m) {
+    case Method::none:
+    case Method::bayer4x4: case Method::bayer8x8:
+    case Method::checker: case Method::bayer2x2:
+    case Method::h2x4: case Method::clustered_dot:
+    case Method::line2: case Method::line_checker:
+    case Method::line4: case Method::line8:
+        return true;
+    default:
+        return false;
+    }
+}
+
+// Get the raw ordered dither threshold at pixel (x, y) for a given method.
+// Returns value in [-0.5, 0.5]. Returns 0 for non-ordered methods.
+float ordered_threshold(Method method, std::size_t x, std::size_t y);
+
 } // namespace png2c64::dither

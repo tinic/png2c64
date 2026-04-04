@@ -39,19 +39,32 @@ struct CellDistTable {
 CellDistTable precompute_cell_dist(
     const Image& image, std::size_t cell_x, std::size_t cell_y,
     const std::vector<color_space::OKLab>& palette_lab,
-    const vic2::ModeParams& params) {
+    const vic2::ModeParams& params,
+    const ThresholdFn& threshold_fn = {},
+    float threshold_strength = 0.0f) {
 
     CellDistTable table;
     table.num_pixels = params.cell_width * params.cell_height;
     auto px = cell_x * params.cell_width;
     auto py = cell_y * params.cell_height;
     auto n_colors = palette_lab.size();
+    bool has_threshold = static_cast<bool>(threshold_fn);
 
     std::size_t pi = 0;
     for (std::size_t dy = 0; dy < params.cell_height; ++dy) {
         for (std::size_t dx = 0; dx < params.cell_width; ++dx) {
             auto pixel_lab =
                 color_space::linear_to_oklab(image[px + dx, py + dy]);
+
+            // Dither-aware: bias pixel by the ordered threshold so the
+            // quantizer picks colors that dither well together.
+            if (has_threshold) {
+                float t = threshold_fn(px + dx, py + dy) * threshold_strength;
+                pixel_lab.L += t * 0.15f;
+                pixel_lab.a += t * 0.03f;
+                pixel_lab.b += t * 0.03f;
+            }
+
             for (std::size_t c = 0; c < n_colors; ++c) {
                 auto& cl = palette_lab[c];
                 float dL = pixel_lab.L - cl.L;
@@ -289,7 +302,8 @@ std::uint8_t find_most_common_color(
 ScreenResult quantize_hires(vic2::Mode mode, const Image& image,
                              const Palette& palette,
                              const std::vector<color_space::OKLab>& palette_lab,
-                             const vic2::ModeParams& params) {
+                             const vic2::ModeParams& params,
+                             const ThresholdFn& tfn, float tstr) {
     auto cx = vic2::cells_x(params);
     auto cy = vic2::cells_y(params);
 
@@ -302,7 +316,8 @@ ScreenResult quantize_hires(vic2::Mode mode, const Image& image,
     std::atomic<float> total_error{0.0f};
 
     parallel_for_cells(cx, cy, [&](std::size_t idx, std::size_t x, std::size_t y) {
-        auto table = precompute_cell_dist(image, x, y, palette_lab, params);
+        auto table = precompute_cell_dist(image, x, y, palette_lab, params,
+                                           tfn, tstr);
         auto cell = quantize_cell_hires(table, palette);
 
         float current = total_error.load(std::memory_order_relaxed);
@@ -324,7 +339,8 @@ ScreenResult quantize_hires(vic2::Mode mode, const Image& image,
 ScreenResult quantize_multicolor_bruteforce(
     vic2::Mode mode, const Image& image, const Palette& palette,
     const std::vector<color_space::OKLab>& palette_lab,
-    const vic2::ModeParams& params) {
+    const vic2::ModeParams& params,
+    const ThresholdFn& tfn, float tstr) {
 
     auto cx = vic2::cells_x(params);
     auto cy = vic2::cells_y(params);
@@ -335,7 +351,8 @@ ScreenResult quantize_multicolor_bruteforce(
     std::vector<CellDistTable> tables(total_cells);
 
     parallel_for_cells(cx, cy, [&](std::size_t idx, std::size_t x, std::size_t y) {
-        tables[idx] = precompute_cell_dist(image, x, y, palette_lab, params);
+        tables[idx] = precompute_cell_dist(image, x, y, palette_lab, params,
+                                            tfn, tstr);
     });
 
     // Step 2: Try all 16 background colors, cells in parallel for each
@@ -375,7 +392,8 @@ ScreenResult quantize_multicolor_bruteforce(
 ScreenResult quantize_multicolor_frequency_bg(
     vic2::Mode mode, const Image& image, const Palette& palette,
     const std::vector<color_space::OKLab>& palette_lab,
-    const vic2::ModeParams& params) {
+    const vic2::ModeParams& params,
+    const ThresholdFn& tfn, float tstr) {
 
     auto cx = vic2::cells_x(params);
     auto cy = vic2::cells_y(params);
@@ -385,7 +403,8 @@ ScreenResult quantize_multicolor_frequency_bg(
 
     std::vector<CellDistTable> tables(total_cells);
     parallel_for_cells(cx, cy, [&](std::size_t idx, std::size_t x, std::size_t y) {
-        tables[idx] = precompute_cell_dist(image, x, y, palette_lab, params);
+        tables[idx] = precompute_cell_dist(image, x, y, palette_lab, params,
+                                            tfn, tstr);
     });
 
     ScreenResult result;
@@ -413,7 +432,9 @@ ScreenResult quantize_multicolor_frequency_bg(
 
 Result<ScreenResult> quantize(const Image& image, const Palette& palette,
                               vic2::Mode mode,
-                              const vic2::ModeParams& params) {
+                              const vic2::ModeParams& params,
+                              ThresholdFn threshold,
+                              float threshold_strength) {
     if (image.width() != params.screen_width ||
         image.height() != params.screen_height) {
         return std::unexpected{Error{
@@ -427,15 +448,18 @@ Result<ScreenResult> quantize(const Image& image, const Palette& palette,
     switch (mode) {
     case vic2::Mode::hires:
     case vic2::Mode::sprite_hires:
-        return quantize_hires(mode, image, palette, palette_lab, params);
+        return quantize_hires(mode, image, palette, palette_lab, params,
+                              threshold, threshold_strength);
 
     case vic2::Mode::multicolor:
         return quantize_multicolor_bruteforce(mode, image, palette,
-                                              palette_lab, params);
+                                              palette_lab, params,
+                                              threshold, threshold_strength);
 
     case vic2::Mode::sprite_multicolor:
         return quantize_multicolor_frequency_bg(mode, image, palette,
-                                                palette_lab, params);
+                                                palette_lab, params,
+                                                threshold, threshold_strength);
     }
 
     std::unreachable();

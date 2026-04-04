@@ -541,4 +541,20 @@ void apply(const Image& image, quantize::ScreenResult& result,
     }
 }
 
+float ordered_threshold(Method method, std::size_t x, std::size_t y) {
+    switch (method) {
+    case Method::bayer4x4:      return bayer4[y % 4][x % 4];
+    case Method::bayer8x8:      return bayer8[y % 8][x % 8];
+    case Method::checker:       return checker_mat[y % 2][x % 2];
+    case Method::bayer2x2:      return bayer2x2_mat[y % 2][x % 2];
+    case Method::h2x4:          return h2x4_mat[y % 4][x % 2];
+    case Method::clustered_dot: return clustered_mat[y % 4][x % 4];
+    case Method::line2:         return line2_mat[y % 2][0];
+    case Method::line_checker:  return line_checker_mat[y % 2][x % 2];
+    case Method::line4:         return line4_mat[y % 4][0];
+    case Method::line8:         return line8_mat[y % 8][0];
+    default:                    return 0.0f;
+    }
+}
+
 } // namespace png2c64::dither
