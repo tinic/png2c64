@@ -632,6 +632,7 @@ void run_interactive(const Image& scaled_image, Config& config,
     bool is_charset_mc = config.charset_mc;
 
     RawTerminal term;
+    std::print("\033[2J"); // clear once on entry
 
     auto refresh = [&] {
         auto pal = palette::by_name(
@@ -657,8 +658,8 @@ void run_interactive(const Image& scaled_image, Config& config,
             output = render_screen(*screen, pal, params);
         }
 
-        // Clear screen and draw UI
-        std::print("\033[2J\033[H");
+        // Move cursor home and overwrite in place (no flicker)
+        std::print("\033[H");
 
         // Panel
         std::println("\033[1m png2c64 interactive \033[0m");
@@ -681,6 +682,7 @@ void run_interactive(const Image& scaled_image, Config& config,
         std::println("");
 
         iterm2_display_image(output, 3);
+        std::print("\033[J"); // clear any stale content below
         std::fflush(stdout);
     };
 
