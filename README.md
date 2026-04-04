@@ -91,7 +91,8 @@ All 17 modes shown with `--gamma 1 --dither-strength 2 --error-clamp 0.2`. Click
 - **Character sets** -- 256-char charset generation with dedup, pattern merging, k-means refinement, and C header export
 - **7 VIC-II palettes** -- Pepto, VICE, Colodore, Deekay, Godot, C64 Wiki, Levy
 - **17 dither modes** -- ordered (Bayer, checker, clustered dot, horizontal lines) and error diffusion (Floyd-Steinberg, Atkinson, Jarvis), including 2:1 pixel-ratio and line-biased variants
-- **Perceptual preprocessing** -- OKLab-space palette range matching, plus brightness/contrast/saturation/gamma
+- **Perceptual preprocessing** -- OKLab-space contrast/saturation/brightness/gamma, plus automatic palette range matching
+- **Interactive mode** -- live parameter tuning in the terminal with instant preview (iTerm2)
 - **Gallery mode** -- preview all dither methods or parameter sweeps inline in the terminal (iTerm2)
 - **C header export** -- charset data, screen map, and color RAM as includable arrays
 
@@ -157,20 +158,33 @@ static const unsigned char name_screen[1000] = { ... };
 static const unsigned char name_color[1000] = { ... };
 ```
 
-### Gallery mode
-Preview parameter variations inline in iTerm2 (or compatible terminals):
+### Interactive mode
+Live parameter tuning with instant preview in iTerm2:
 ```bash
-# Compare all 12 dither methods
-png2c64 --gallery dither input.jpg
+png2c64 --interactive input.jpg output.png
+png2c64 --mode charset-mc --width 320 --height 200 --interactive input.jpg output.h
+```
 
-# Sweep gamma values
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| `p`/`P` | palette next/prev | `d`/`D` | dither next/prev |
+| `g`/`G` | gamma +/- | `s`/`S` | strength +/- |
+| `b`/`B` | brightness +/- | `c`/`C` | contrast +/- |
+| `t`/`T` | saturation +/- | `e`/`E` | error clamp +/- |
+| `x` | serpentine toggle | `r` | reset all |
+| `w` | save output | `q` | quit |
+
+### Gallery mode
+Preview parameter variations inline in iTerm2:
+```bash
+png2c64 --gallery dither input.jpg
 png2c64 --gallery gamma input.jpg
 
 # Available: dither, brightness, contrast, saturation, gamma,
 #            error-clamp, dither-strength
 ```
 
-Gallery works with all modes including charset.
+Gallery and interactive work with all modes including charset.
 
 ## Options
 
@@ -182,6 +196,7 @@ Gallery works with all modes including charset.
 --dither <method>          Dithering method (default: checker)
   Square-pixel:            none, bayer4, bayer8, fs, atkinson, sierra
   2:1 multicolor:          checker, bayer2x2, h2x4, clustered, fs-wide, jarvis
+  Horizontal lines:        line2, line-checker, line4, line8, line-fs
 --dither-strength <float>  0.0-2.0 (default: 1.0)
 --error-clamp <float>      Max error accumulation 0.1-2.0 (default: 0.8)
 --no-serpentine            Disable bidirectional scanning
@@ -194,6 +209,7 @@ Gallery works with all modes including charset.
 --sprites-x <int>          Sprite sheet columns (default: 1)
 --sprites-y <int>          Sprite sheet rows (default: 1)
 --gallery <param>          Preview parameter variations in terminal
+--interactive              Live parameter tuning with instant preview
 ```
 
 ## How it works
