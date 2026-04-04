@@ -9,11 +9,8 @@ Built for C64 demo scene production. All color operations use OKLab perceptual c
 | | | |
 |---|---|---|
 | ![alien](examples/alien-c64.png) | ![dog](examples/dog-c64.png) | ![dragon](examples/dragon-c64.png) |
-| alien | dog | dragon |
 | ![face](examples/face-c64.png) | ![fantasy](examples/fantasy-c64.png) | ![golden3](examples/golden3-c64.png) |
-| face | fantasy | golden3 |
 | ![monster](examples/monster-c64.png) | ![ship](examples/ship-c64.png) | |
-| monster | ship | |
 
 ## Features
 
