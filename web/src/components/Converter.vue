@@ -245,7 +245,7 @@ function onFileSelect(event) {
                 'border-dashed p-4 text-center': !imageUrl,
                 'border-transparent': imageUrl && !dragOver,
               }"
-              @drop="onDrop"
+              @drop="onDrop($event); dismissHint()"
               @dragover="onDragOver"
               @dragleave="onDragLeave"
               @click="openPicker(); dismissHint()"
@@ -253,16 +253,21 @@ function onFileSelect(event) {
               <template v-if="imageUrl">
                 <div class="relative">
                   <img :src="imageUrl" class="original-preview w-full border-round" />
-                  <div v-if="showUploadHint" class="upload-hint" @click.stop="dismissHint">
+                  <div v-if="showUploadHint" class="upload-hint"
+                    @click.stop="dismissHint(); openPicker()"
+                    @drop.prevent="onDrop($event); dismissHint()"
+                    @dragover.prevent="onDragOver($event)"
+                    @dragleave="onDragLeave($event)"
+                  >
                     <i class="pi pi-images mb-2" style="font-size: 1.5rem"></i>
                     <div class="font-semibold text-sm">Drop or click to load your own image</div>
                     <div class="text-xs mt-1" style="opacity: 0.7">Or pick an example below</div>
                     <div class="text-xs mt-2" style="opacity: 0.5">CLI tool with more features on <a href="https://github.com/tinic/png2c64" target="_blank" style="color: inherit;">GitHub</a></div>
                   </div>
                 </div>
-                <div class="text-xs text-color-secondary mt-2 px-1 flex justify-content-between">
-                  <span class="white-space-nowrap overflow-hidden text-overflow-ellipsis">{{ imageName }}</span>
-                  <span class="white-space-nowrap ml-2 cursor-pointer" @click.stop="openPicker(); dismissHint()">Change</span>
+                <div class="text-xs text-color-secondary mt-2 px-1 flex justify-content-between overflow-hidden">
+                  <span class="overflow-hidden text-overflow-ellipsis" style="min-width: 0; display: block;">{{ imageName }}</span>
+                  <span class="white-space-nowrap ml-2 cursor-pointer flex-shrink-0" @click.stop="openPicker(); dismissHint()">Change</span>
                 </div>
               </template>
               <template v-else>
@@ -460,9 +465,14 @@ function onFileSelect(event) {
 
 .drop-zone {
   transition: border-color 0.15s, background 0.15s;
+  max-width: 100%;
 }
 .drop-zone:hover {
   border-color: var(--p-primary-color) !important;
+}
+
+:deep(.p-panel-content) {
+  overflow: hidden;
 }
 
 .original-preview {
