@@ -2,7 +2,7 @@
 import { ref, reactive, watch, nextTick } from 'vue'
 import { useWasm } from '../composables/useWasm.js'
 import { useImageUpload } from '../composables/useImageUpload.js'
-import { MODES, PALETTES, DITHER_METHODS, SLIDERS, DIFFUSION_SLIDERS, EXAMPLES, defaultOptions, isSpriteMode, spriteGridDimensions, hasPrgExport, isErrorDiffusion } from '../lib/options.js'
+import { MODES, PALETTES, DITHER_METHODS, SLIDERS, DIFFUSION_SLIDERS, EXAMPLES, defaultOptions, isSpriteMode, isCharsetMode, spriteGridDimensions, hasPrgExport, isErrorDiffusion } from '../lib/options.js'
 
 import InputNumber from 'primevue/inputnumber'
 
@@ -14,13 +14,24 @@ import ProgressSpinner from 'primevue/progressspinner'
 import FileUpload from 'primevue/fileupload'
 import Panel from 'primevue/panel'
 
-const { loading: wasmLoading, error: wasmError, convertRGBA, convertPNG, convertPRG } = useWasm()
+const { loading: wasmLoading, error: wasmError, convertRGBA, convertPNG, convertPRG, convertHeader, convertRaw } = useWasm()
 const { imageBytes, imageName, imageUrl, dragOver, onDrop, onDragOver, onDragLeave, openPicker } = useImageUpload()
 
-// Load dragon example by default once WASM is ready
+const showUploadHint = ref(true)
+
+// Load dragon example by default once WASM is ready (don't dismiss hint)
 watch(wasmLoading, (loading) => {
   if (!loading && !imageBytes.value) {
-    loadExample(EXAMPLES.find(e => e.name === 'dragon'))
+    const dragon = EXAMPLES.find(e => e.name === 'dragon')
+    fetch(`/examples/${dragon.file}`)
+      .then(r => r.arrayBuffer())
+      .then(buf => {
+        imageBytes.value = new Uint8Array(buf)
+        imageName.value = dragon.file
+        const blob = new Blob([buf], { type: 'image/png' })
+        imageUrl.value = URL.createObjectURL(blob)
+        // keep showUploadHint = true for the default load
+      })
   }
 })
 
@@ -139,11 +150,58 @@ function downloadPRG() {
   }
 }
 
+function downloadHeader() {
+  if (!imageBytes.value) return
+  try {
+    const stem = (imageName.value || 'image').replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9]/g, '_')
+    const result = convertHeader(imageBytes.value, buildWasmOptions(), stem)
+    if (result.error) {
+      errorMsg.value = result.error
+      return
+    }
+    const blob = new Blob([result.header], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = stem + '.h'
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    errorMsg.value = e.message
+  }
+}
+
+function downloadRaw(format) {
+  if (!imageBytes.value) return
+  try {
+    const result = convertRaw(imageBytes.value, buildWasmOptions(), format)
+    if (result.error) {
+      errorMsg.value = result.error
+      return
+    }
+    const ext = format === 'koa' ? '.koa' : '.hir'
+    const blob = new Blob([result.data], { type: 'application/octet-stream' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = (imageName.value || 'image').replace(/\.[^.]+$/, '') + ext
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    errorMsg.value = e.message
+  }
+}
+
 function resetOptions() {
   Object.assign(options, defaultOptions())
 }
 
+function dismissHint() {
+  showUploadHint.value = false
+}
+
 async function loadExample(example) {
+  dismissHint()
   const resp = await fetch(`/examples/${example.file}`)
   const buf = await resp.arrayBuffer()
   imageBytes.value = new Uint8Array(buf)
@@ -190,13 +248,21 @@ function onFileSelect(event) {
               @drop="onDrop"
               @dragover="onDragOver"
               @dragleave="onDragLeave"
-              @click="openPicker"
+              @click="openPicker(); dismissHint()"
             >
               <template v-if="imageUrl">
-                <img :src="imageUrl" class="original-preview w-full border-round" />
+                <div class="relative">
+                  <img :src="imageUrl" class="original-preview w-full border-round" />
+                  <div v-if="showUploadHint" class="upload-hint" @click.stop="dismissHint">
+                    <i class="pi pi-images mb-2" style="font-size: 1.5rem"></i>
+                    <div class="font-semibold text-sm">Drop or click to load your own image</div>
+                    <div class="text-xs mt-1" style="opacity: 0.7">Or pick an example below</div>
+                    <div class="text-xs mt-2" style="opacity: 0.5">CLI tool with more features on <a href="https://github.com/tinic/png2c64" target="_blank" style="color: inherit;">GitHub</a></div>
+                  </div>
+                </div>
                 <div class="text-xs text-color-secondary mt-2 px-1 flex justify-content-between">
                   <span class="white-space-nowrap overflow-hidden text-overflow-ellipsis">{{ imageName }}</span>
-                  <span class="white-space-nowrap ml-2">Click to change</span>
+                  <span class="white-space-nowrap ml-2 cursor-pointer" @click.stop="openPicker(); dismissHint()">Change</span>
                 </div>
               </template>
               <template v-else>
@@ -303,10 +369,21 @@ function onFileSelect(event) {
           <!-- Actions -->
           <div class="flex flex-column gap-2">
             <div class="flex gap-2">
-              <Button label="PNG" icon="pi pi-download" class="flex-1" :disabled="!imageBytes || converting" @click="downloadPNG" />
-              <Button label="PRG" icon="pi pi-download" class="flex-1" severity="info" :disabled="!imageBytes || converting || !hasPrgExport(options.mode)" @click="downloadPRG" />
+              <Button label="png" icon="pi pi-download" class="flex-1" :disabled="!imageBytes || converting" @click="downloadPNG"
+                title="Download the converted image as a PNG file. Pixel-doubled for multicolor modes." />
+              <Button v-if="hasPrgExport(options.mode)" label="prg" icon="pi pi-download" class="flex-1" severity="secondary" :disabled="!imageBytes || converting" @click="downloadPRG"
+                title="Download as a C64 executable PRG with fade-in displayer. Load and RUN in VICE or on real hardware." />
+              <Button v-if="options.mode === 'multicolor'" label="koa" icon="pi pi-download" class="flex-1" severity="secondary" :disabled="!imageBytes || converting" @click="downloadRaw('koa')"
+                title="Koala Paint format. Raw bitmap + screen + color RAM + background. Load address $6000." />
+              <Button v-if="options.mode === 'hires'" label="hir" icon="pi pi-download" class="flex-1" severity="secondary" :disabled="!imageBytes || converting" @click="downloadRaw('hir')"
+                title="Art Studio hires format. Raw bitmap + screen RAM. Load address $2000." />
+              <Button v-if="isCharsetMode(options.mode)" label="h" icon="pi pi-download" class="flex-1" severity="secondary" :disabled="!imageBytes || converting" @click="downloadHeader"
+                title="Download C header with charset data, screen map, and color RAM arrays for inclusion in C64 demo source code." />
+              <Button v-if="isSpriteMode(options.mode)" label="h" icon="pi pi-download" class="flex-1" severity="secondary" :disabled="!imageBytes || converting" @click="downloadHeader"
+                title="Download C header with sprite data (64 bytes each), per-sprite colors, and shared color definitions." />
             </div>
-            <Button label="Reset" icon="pi pi-refresh" severity="secondary" outlined class="w-full" @click="resetOptions" />
+            <Button label="Reset" icon="pi pi-refresh" severity="secondary" outlined class="w-full" @click="resetOptions"
+              title="Reset all parameters to defaults." />
           </div>
 
         </div>
@@ -338,11 +415,24 @@ function onFileSelect(event) {
   </div>
 </template>
 
+<style>
+/* Global: PrimeVue teleports overlays to body, outside scoped styles */
+.p-select-overlay .p-select-option,
+.p-select-overlay .p-select-option-group {
+  font-size: 0.75rem;
+}
+.p-select-overlay .p-select-option-group {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.5;
+  padding-top: 0.75rem;
+}
+</style>
+
 <style scoped>
 :deep(.p-select),
-:deep(.p-select-label),
-:deep(.p-select-option),
-:deep(.p-select-option-group) {
+:deep(.p-select-label) {
   font-size: 0.75rem;
 }
 
@@ -368,6 +458,21 @@ function onFileSelect(event) {
   display: block;
   max-height: 200px;
   object-fit: contain;
+}
+
+.upload-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  border-radius: inherit;
+  cursor: pointer;
+  text-align: center;
+  padding: 1rem;
 }
 
 .example-thumb {

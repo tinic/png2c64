@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <format>
 #include <fstream>
+#include <sstream>
 #include <limits>
 #include <map>
 #include <set>
@@ -889,17 +890,10 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
     return result;
 }
 
-Result<void> write_header(std::string_view path,
-                          const CharsetResult& result,
-                          std::string_view name) {
-    std::ofstream out{std::string{path}};
-    if (!out) {
-        return std::unexpected{Error{
-            ErrorCode::write_failed,
-            "Failed to open header file: " + std::string(path),
-        }};
-    }
+namespace {
 
+void write_header_to(std::ostream& out, const CharsetResult& result,
+                     std::string_view name) {
     auto num_cells = result.cols * result.rows;
 
     out << "#pragma once\n\n";
@@ -957,8 +951,29 @@ Result<void> write_header(std::string_view path,
         out << "\n";
     }
     out << "};\n";
+}
 
+} // namespace
+
+Result<void> write_header(std::string_view path,
+                          const CharsetResult& result,
+                          std::string_view name) {
+    std::ofstream out{std::string{path}};
+    if (!out) {
+        return std::unexpected{Error{
+            ErrorCode::write_failed,
+            "Failed to open header file: " + std::string(path),
+        }};
+    }
+    write_header_to(out, result, name);
     return {};
+}
+
+std::string generate_header(const CharsetResult& result,
+                            std::string_view name) {
+    std::ostringstream out;
+    write_header_to(out, result, name);
+    return out.str();
 }
 
 Image render(const CharsetResult& result, const Palette& palette) {

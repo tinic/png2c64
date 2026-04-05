@@ -1,8 +1,10 @@
 export const MODES = [
   { value: 'multicolor', label: 'Multicolor (160x200)' },
   { value: 'hires', label: 'Hi-Res (320x200)' },
-  { value: 'sprite-hi', label: 'Sprite Hi-Res' },
+  { value: 'charset-mc', label: 'Charset Multicolor' },
+  { value: 'charset-hi', label: 'Charset Hi-Res' },
   { value: 'sprite-mc', label: 'Sprite Multicolor' },
+  { value: 'sprite-hi', label: 'Sprite Hi-Res' },
 ]
 
 export const PALETTES = [
@@ -101,6 +103,10 @@ export function isSpriteMode(mode) {
 
 export function hasPrgExport(mode) {
   return mode === 'multicolor' || mode === 'hires'
+}
+
+export function isCharsetMode(mode) {
+  return mode === 'charset-hi' || mode === 'charset-mc'
 }
 
 const ERROR_DIFFUSION = new Set(['fs', 'atkinson', 'sierra', 'fs-wide', 'jarvis', 'line-fs'])

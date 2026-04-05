@@ -25,6 +25,12 @@ Result<PrgData> hires_bitmap(const quantize::ScreenResult& screen);
 // Auto-detect mode and generate the appropriate PRG.
 Result<PrgData> from_screen(const quantize::ScreenResult& screen);
 
+// Generate raw Koala Paint format (.koa): $6000 + bitmap + screen + d800 + bg
+Result<PrgData> koala_raw(const quantize::ScreenResult& screen);
+
+// Generate raw Art Studio format (.hir): $2000 + bitmap + screen
+Result<PrgData> hires_raw(const quantize::ScreenResult& screen);
+
 // Write PRG data to a file.
 Result<void> write(std::string_view path, const PrgData& prg);
 

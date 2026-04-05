@@ -37,6 +37,10 @@ Result<void> write_header(std::string_view path,
                           const CharsetResult& result,
                           std::string_view name);
 
+// Generate C header as a string (for WASM/web export)
+std::string generate_header(const CharsetResult& result,
+                            std::string_view name);
+
 Image render(const CharsetResult& result, const Palette& palette);
 
 } // namespace png2c64::charset

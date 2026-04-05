@@ -46,4 +46,20 @@ ConvertResult convert_prg(const std::uint8_t* input_data,
                           std::size_t input_size,
                           const Options& options);
 
+// Convert and return raw Koala Paint .koa file (multicolor only).
+ConvertResult convert_koa(const std::uint8_t* input_data,
+                          std::size_t input_size,
+                          const Options& options);
+
+// Convert and return raw Art Studio .hir file (hires only).
+ConvertResult convert_hir(const std::uint8_t* input_data,
+                          std::size_t input_size,
+                          const Options& options);
+
+// Convert raw image data and return C header text (charset modes only).
+ConvertResult convert_header(const std::uint8_t* input_data,
+                             std::size_t input_size,
+                             const Options& options,
+                             const std::string& name);
+
 } // namespace png2c64::api

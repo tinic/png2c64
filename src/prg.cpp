@@ -157,6 +157,49 @@ Result<PrgData> hires_bitmap(const quantize::ScreenResult& screen) {
                               image_data, 0x2000);
 }
 
+Result<PrgData> koala_raw(const quantize::ScreenResult& screen) {
+    if (screen.cells.size() != 1000) {
+        return std::unexpected{Error{
+            ErrorCode::invalid_dimensions,
+            "Koala requires 40x25 = 1000 cells",
+        }};
+    }
+
+    auto params = vic2::get_mode_params(vic2::Mode::multicolor);
+    auto bitmap = encode_bitmap(screen, params);
+    auto scr = encode_screen_koala(screen);
+    auto d800 = encode_d800_koala(screen);
+
+    PrgData prg;
+    prg.bytes.reserve(10003);
+    write_le16(prg.bytes, 0x6000); // Koala Paint load address
+    prg.bytes.insert(prg.bytes.end(), bitmap.begin(), bitmap.end());
+    prg.bytes.insert(prg.bytes.end(), scr.begin(), scr.end());
+    prg.bytes.insert(prg.bytes.end(), d800.begin(), d800.end());
+    prg.bytes.push_back(screen.background_color & 0x0F);
+    return prg;
+}
+
+Result<PrgData> hires_raw(const quantize::ScreenResult& screen) {
+    if (screen.cells.size() != 1000) {
+        return std::unexpected{Error{
+            ErrorCode::invalid_dimensions,
+            "Hires bitmap requires 40x25 = 1000 cells",
+        }};
+    }
+
+    auto params = vic2::get_mode_params(vic2::Mode::hires);
+    auto bitmap = encode_bitmap(screen, params);
+    auto scr = encode_screen_hires(screen);
+
+    PrgData prg;
+    prg.bytes.reserve(9002);
+    write_le16(prg.bytes, 0x2000); // Art Studio load address
+    prg.bytes.insert(prg.bytes.end(), bitmap.begin(), bitmap.end());
+    prg.bytes.insert(prg.bytes.end(), scr.begin(), scr.end());
+    return prg;
+}
+
 Result<PrgData> from_screen(const quantize::ScreenResult& screen) {
     switch (screen.mode) {
     case vic2::Mode::multicolor:

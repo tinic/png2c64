@@ -38,7 +38,17 @@ export function useWasm() {
     return module.value.convertPRG(imageBytes, options)
   }
 
+  function convertHeader(imageBytes, options, name) {
+    if (!module.value) throw new Error('WASM not loaded')
+    return module.value.convertHeader(imageBytes, options, name)
+  }
+
+  function convertRaw(imageBytes, options, format) {
+    if (!module.value) throw new Error('WASM not loaded')
+    return module.value.convertRaw(imageBytes, options, format)
+  }
+
   init()
 
-  return { module, loading, error, convertRGBA, convertPNG, convertPRG }
+  return { module, loading, error, convertRGBA, convertPNG, convertPRG, convertHeader, convertRaw }
 }

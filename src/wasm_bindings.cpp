@@ -113,8 +113,63 @@ val js_convert_prg(val input_array, val js_opts) {
     return obj;
 }
 
+// JS API: convertHeader(Uint8Array, options, name) -> { header: string, width, height, error }
+val js_convert_header(val input_array, val js_opts, std::string name) {
+    auto length = input_array["length"].as<std::size_t>();
+    std::vector<std::uint8_t> input(length);
+    for (std::size_t i = 0; i < length; ++i)
+        input[i] = input_array[i].as<std::uint8_t>();
+
+    auto opts = parse_js_options(js_opts);
+    auto result = convert_header(input.data(), input.size(), opts, name);
+
+    val obj = val::object();
+    obj.set("width", result.width);
+    obj.set("height", result.height);
+    obj.set("error", result.error);
+
+    if (!result.png_data.empty()) {
+        std::string text(result.png_data.begin(), result.png_data.end());
+        obj.set("header", text);
+    }
+
+    return obj;
+}
+
+val js_convert_raw(val input_array, val js_opts, std::string format) {
+    auto length = input_array["length"].as<std::size_t>();
+    std::vector<std::uint8_t> input(length);
+    for (std::size_t i = 0; i < length; ++i)
+        input[i] = input_array[i].as<std::uint8_t>();
+
+    auto opts = parse_js_options(js_opts);
+    ConvertResult result;
+    if (format == "koa")
+        result = convert_koa(input.data(), input.size(), opts);
+    else if (format == "hir")
+        result = convert_hir(input.data(), input.size(), opts);
+    else
+        result = {{}, 0, 0, "Unknown format: " + format};
+
+    val obj = val::object();
+    obj.set("width", result.width);
+    obj.set("height", result.height);
+    obj.set("error", result.error);
+
+    if (!result.png_data.empty()) {
+        val data = val::global("Uint8Array").new_(result.png_data.size());
+        for (std::size_t i = 0; i < result.png_data.size(); ++i)
+            data.set(i, result.png_data[i]);
+        obj.set("data", data);
+    }
+
+    return obj;
+}
+
 EMSCRIPTEN_BINDINGS(png2c64) {
     function("convert", &js_convert);
     function("convertRGBA", &js_convert_rgba);
     function("convertPRG", &js_convert_prg);
+    function("convertHeader", &js_convert_header);
+    function("convertRaw", &js_convert_raw);
 }

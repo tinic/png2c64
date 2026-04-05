@@ -1,4 +1,5 @@
 #include "api.hpp"
+#include "charset.hpp"
 #include "color_space.hpp"
 #include "prg.hpp"
 
@@ -14,6 +15,8 @@
 
 #include <cmath>
 #include <cstdint>
+#include <format>
+#include <sstream>
 
 namespace png2c64::api {
 
@@ -48,22 +51,26 @@ dither::Method parse_dither(const std::string& s) {
     return dither::Method::checker;
 }
 
+bool is_charset_mode(const std::string& mode) {
+    return mode == "charset-hi" || mode == "charset-mc";
+}
+
 struct PipelineResult {
     Image rendered;
     quantize::ScreenResult screen;
 };
 
-// Core pipeline: load -> scale -> preprocess -> quantize -> dither -> render
-Result<PipelineResult> run_pipeline(const std::uint8_t* input_data,
-                                    std::size_t input_size,
-                                    const Options& options) {
-    // Load from memory via stb_image
+// Load image from memory, scale, preprocess
+Result<Image> load_and_preprocess(const std::uint8_t* input_data,
+                                   std::size_t input_size,
+                                   const Options& options,
+                                   std::size_t target_w,
+                                   std::size_t target_h) {
     int w{}, h{}, channels{};
     auto* raw = stbi_load_from_memory(input_data,
         static_cast<int>(input_size), &w, &h, &channels, 3);
-    if (!raw) {
+    if (!raw)
         return std::unexpected{Error{ErrorCode::invalid_png, "Failed to decode image"}};
-    }
 
     auto width = static_cast<std::size_t>(w);
     auto height = static_cast<std::size_t>(h);
@@ -77,27 +84,12 @@ Result<PipelineResult> run_pipeline(const std::uint8_t* input_data,
 
     Image image(width, height, std::move(pixels));
 
-    // Mode params — for sprites, width/height define the sheet dimensions
-    auto mode = parse_mode(options.mode);
-    auto params = vic2::get_mode_params(mode);
-
-    auto target_w = options.width > 0
-        ? static_cast<std::size_t>(options.width) : params.screen_width;
-    auto target_h = options.height > 0
-        ? static_cast<std::size_t>(options.height) : params.screen_height;
-
-    // Update params to match actual target (critical for sprites/charsets)
-    params.screen_width = target_w;
-    params.screen_height = target_h;
-
-    // Scale
     if (image.width() != target_w || image.height() != target_h) {
         auto scaled = scale::bicubic(image, target_w, target_h);
         if (!scaled) return std::unexpected{scaled.error()};
         image = *std::move(scaled);
     }
 
-    // Preprocess
     preprocess::Settings pp;
     pp.gamma = options.gamma;
     pp.brightness = options.brightness;
@@ -106,20 +98,79 @@ Result<PipelineResult> run_pipeline(const std::uint8_t* input_data,
     preprocess::apply(image, pp);
 
     auto pal = palette::by_name(options.palette);
-    if (pal.colors.empty())
-        pal = palette::by_name("pepto");
-
+    if (pal.colors.empty()) pal = palette::by_name("pepto");
     preprocess::match_palette_range(image, pal);
 
-    // Dither settings
+    return image;
+}
+
+dither::Settings make_dither_settings(const Options& options) {
     dither::Settings ds;
     ds.method = parse_dither(options.dither);
     ds.strength = options.dither_strength;
     ds.error_clamp = options.error_clamp;
     ds.serpentine = options.serpentine;
     ds.adaptive = options.adaptive;
+    return ds;
+}
 
-    // Dither-aware quantization
+// Charset pipeline: returns rendered preview image
+Result<Image> run_charset_pipeline(const std::uint8_t* input_data,
+                                    std::size_t input_size,
+                                    const Options& options) {
+    bool mc = (options.mode == "charset-mc");
+
+    // Determine target dimensions
+    auto target_w = options.width > 0
+        ? static_cast<std::size_t>(options.width) : std::size_t{320};
+    auto target_h = options.height > 0
+        ? static_cast<std::size_t>(options.height) : std::size_t{200};
+
+    auto image = load_and_preprocess(input_data, input_size, options,
+                                      target_w, target_h);
+    if (!image) return std::unexpected{image.error()};
+
+    // For multicolor charset, scale width /2 for logical resolution
+    if (mc) {
+        auto logical_w = image->width() / 2;
+        auto scaled = scale::bicubic(*image, logical_w, image->height());
+        if (!scaled) return std::unexpected{scaled.error()};
+        image = std::move(scaled);
+    }
+
+    auto pal = palette::by_name(options.palette);
+    if (pal.colors.empty()) pal = palette::by_name("pepto");
+
+    auto ds = make_dither_settings(options);
+    auto result = charset::convert(*image, pal, mc, ds);
+    if (!result) return std::unexpected{result.error()};
+
+    return charset::render(*result, pal);
+}
+
+// Bitmap/sprite pipeline
+Result<PipelineResult> run_pipeline(const std::uint8_t* input_data,
+                                    std::size_t input_size,
+                                    const Options& options) {
+    auto mode = parse_mode(options.mode);
+    auto params = vic2::get_mode_params(mode);
+
+    auto target_w = options.width > 0
+        ? static_cast<std::size_t>(options.width) : params.screen_width;
+    auto target_h = options.height > 0
+        ? static_cast<std::size_t>(options.height) : params.screen_height;
+    params.screen_width = target_w;
+    params.screen_height = target_h;
+
+    auto image = load_and_preprocess(input_data, input_size, options,
+                                      target_w, target_h);
+    if (!image) return std::unexpected{image.error()};
+
+    auto pal = palette::by_name(options.palette);
+    if (pal.colors.empty()) pal = palette::by_name("pepto");
+
+    auto ds = make_dither_settings(options);
+
     quantize::ThresholdFn tfn;
     if (dither::is_ordered(ds.method) && ds.method != dither::Method::none) {
         auto m = ds.method;
@@ -129,18 +180,16 @@ Result<PipelineResult> run_pipeline(const std::uint8_t* input_data,
         };
     }
 
-    auto screen = quantize::quantize(image, pal, mode, params, tfn, ds.strength);
+    auto screen = quantize::quantize(*image, pal, mode, params, tfn, ds.strength);
     if (!screen) return std::unexpected{screen.error()};
 
     if (ds.method != dither::Method::none)
-        dither::apply(image, *screen, pal, params, ds);
+        dither::apply(*image, *screen, pal, params, ds);
 
     // Render
-    auto out_w = params.screen_width;
-    auto out_h = params.screen_height;
     auto cx = vic2::cells_x(params);
     std::size_t pixel_stretch = vic2::is_double_wide(mode) ? 2 : 1;
-    Image output(out_w * pixel_stretch, out_h);
+    Image output(params.screen_width * pixel_stretch, params.screen_height);
 
     for (std::size_t ci = 0; ci < screen->cells.size(); ++ci) {
         auto& cell = screen->cells[ci];
@@ -165,32 +214,22 @@ Result<PipelineResult> run_pipeline(const std::uint8_t* input_data,
     return PipelineResult{std::move(output), *std::move(screen)};
 }
 
-} // namespace
-
-ConvertResult convert(const std::uint8_t* input_data, std::size_t input_size,
-                      const Options& options) {
-    auto result = run_pipeline(input_data, input_size, options);
-    if (!result) return {{}, 0, 0, result.error().message};
-
-    auto png = png_io::encode(result->rendered);
-    if (!png) return {{}, 0, 0, png.error().message};
-
-    return {*std::move(png),
-            static_cast<int>(result->rendered.width()),
-            static_cast<int>(result->rendered.height()), ""};
-}
-
-ConvertResult convert_rgba(const std::uint8_t* input_data,
+// Get rendered Image for any mode (charset or bitmap/sprite)
+Result<Image> get_rendered(const std::uint8_t* input_data,
                            std::size_t input_size,
                            const Options& options) {
-    auto result = run_pipeline(input_data, input_size, options);
-    if (!result) return {{}, 0, 0, result.error().message};
+    if (is_charset_mode(options.mode))
+        return run_charset_pipeline(input_data, input_size, options);
 
-    auto& img = result->rendered;
+    auto result = run_pipeline(input_data, input_size, options);
+    if (!result) return std::unexpected{result.error()};
+    return std::move(result->rendered);
+}
+
+std::vector<std::uint8_t> image_to_rgba(const Image& img) {
     auto w = img.width();
     auto h = img.height();
     std::vector<std::uint8_t> rgba(w * h * 4);
-
     for (std::size_t i = 0; i < w * h; ++i) {
         auto y = i / w;
         auto x = i % w;
@@ -201,13 +240,41 @@ ConvertResult convert_rgba(const std::uint8_t* input_data,
         rgba[base + 2] = static_cast<std::uint8_t>(std::lround(srgb.b * 255.0f));
         rgba[base + 3] = 255;
     }
+    return rgba;
+}
 
-    return {std::move(rgba), static_cast<int>(w), static_cast<int>(h), ""};
+} // namespace
+
+ConvertResult convert(const std::uint8_t* input_data, std::size_t input_size,
+                      const Options& options) {
+    auto img = get_rendered(input_data, input_size, options);
+    if (!img) return {{}, 0, 0, img.error().message};
+
+    auto png = png_io::encode(*img);
+    if (!png) return {{}, 0, 0, png.error().message};
+
+    return {*std::move(png),
+            static_cast<int>(img->width()),
+            static_cast<int>(img->height()), ""};
+}
+
+ConvertResult convert_rgba(const std::uint8_t* input_data,
+                           std::size_t input_size,
+                           const Options& options) {
+    auto img = get_rendered(input_data, input_size, options);
+    if (!img) return {{}, 0, 0, img.error().message};
+
+    return {image_to_rgba(*img),
+            static_cast<int>(img->width()),
+            static_cast<int>(img->height()), ""};
 }
 
 ConvertResult convert_prg(const std::uint8_t* input_data,
                           std::size_t input_size,
                           const Options& options) {
+    if (is_charset_mode(options.mode))
+        return {{}, 0, 0, "PRG export not supported for charset modes"};
+
     auto result = run_pipeline(input_data, input_size, options);
     if (!result) return {{}, 0, 0, result.error().message};
 
@@ -217,6 +284,191 @@ ConvertResult convert_prg(const std::uint8_t* input_data,
     return {std::move(prg_data->bytes),
             static_cast<int>(result->rendered.width()),
             static_cast<int>(result->rendered.height()), ""};
+}
+
+ConvertResult convert_koa(const std::uint8_t* input_data,
+                          std::size_t input_size,
+                          const Options& options) {
+    if (options.mode != "multicolor")
+        return {{}, 0, 0, "Koala export only supports multicolor mode"};
+
+    auto result = run_pipeline(input_data, input_size, options);
+    if (!result) return {{}, 0, 0, result.error().message};
+
+    auto koa = prg::koala_raw(result->screen);
+    if (!koa) return {{}, 0, 0, koa.error().message};
+
+    return {std::move(koa->bytes),
+            static_cast<int>(result->rendered.width()),
+            static_cast<int>(result->rendered.height()), ""};
+}
+
+ConvertResult convert_hir(const std::uint8_t* input_data,
+                          std::size_t input_size,
+                          const Options& options) {
+    if (options.mode != "hires")
+        return {{}, 0, 0, "Art Studio export only supports hires mode"};
+
+    auto result = run_pipeline(input_data, input_size, options);
+    if (!result) return {{}, 0, 0, result.error().message};
+
+    auto hir = prg::hires_raw(result->screen);
+    if (!hir) return {{}, 0, 0, hir.error().message};
+
+    return {std::move(hir->bytes),
+            static_cast<int>(result->rendered.width()),
+            static_cast<int>(result->rendered.height()), ""};
+}
+
+// Generate sprite header from ScreenResult
+std::string generate_sprite_header(const quantize::ScreenResult& screen,
+                                    const vic2::ModeParams& params,
+                                    std::string_view name) {
+    std::ostringstream out;
+    bool mc = (screen.mode == vic2::Mode::sprite_multicolor);
+    auto cx = params.screen_width / params.cell_width;
+    auto cy = params.screen_height / params.cell_height;
+    auto count = screen.cells.size();
+
+    out << "#pragma once\n\n";
+    out << "// Generated by png2c64\n";
+    out << std::format("// Mode: {} sprites\n", mc ? "multicolor" : "hires");
+    out << std::format("// Grid: {}x{} ({} sprites)\n\n", cx, cy, count);
+
+    out << std::format("#define {}_COLS {}\n", name, cx);
+    out << std::format("#define {}_ROWS {}\n", name, cy);
+    out << std::format("#define {}_COUNT {}\n", name, count);
+    out << std::format("#define {}_BACKGROUND {}\n", name, screen.background_color);
+    if (mc) {
+        // For multicolor sprites, cell_colors[0]=bg, [1]=mc1(shared), [2]=mc2(shared), [3]=per-sprite
+        // mc1 and mc2 are shared across all sprites — take from first cell
+        if (!screen.cells.empty() && screen.cells[0].cell_colors.size() >= 3) {
+            out << std::format("#define {}_MULTICOLOR0 {}\n", name, screen.cells[0].cell_colors[1]);
+            out << std::format("#define {}_MULTICOLOR1 {}\n", name, screen.cells[0].cell_colors[2]);
+        }
+    }
+
+    // Sprite data: 64 bytes per sprite (63 data + 1 padding)
+    out << std::format("\nstatic const unsigned char {}_data[{}] = {{\n",
+                       name, count * 64);
+    for (std::size_t si = 0; si < count; ++si) {
+        auto& cell = screen.cells[si];
+        out << std::format("    // Sprite {}\n    ", si);
+
+        // Encode 21 rows * 3 bytes = 63 bytes
+        for (std::size_t row = 0; row < params.cell_height; ++row) {
+            if (mc) {
+                // 12 pixels per row, 2 bits each = 3 bytes
+                for (std::size_t byteIdx = 0; byteIdx < 3; ++byteIdx) {
+                    std::uint8_t byte = 0;
+                    for (std::size_t bit = 0; bit < 4; ++bit) {
+                        auto col = byteIdx * 4 + bit;
+                        auto pi = row * params.cell_width + col;
+                        if (pi < cell.pixel_indices.size())
+                            byte |= static_cast<std::uint8_t>(
+                                cell.pixel_indices[pi] << (6 - bit * 2));
+                    }
+                    out << std::format("0x{:02x},", byte);
+                }
+            } else {
+                // 24 pixels per row, 1 bit each = 3 bytes
+                for (std::size_t byteIdx = 0; byteIdx < 3; ++byteIdx) {
+                    std::uint8_t byte = 0;
+                    for (std::size_t bit = 0; bit < 8; ++bit) {
+                        auto col = byteIdx * 8 + bit;
+                        auto pi = row * params.cell_width + col;
+                        if (pi < cell.pixel_indices.size() &&
+                            cell.pixel_indices[pi] == 1)
+                            byte |= static_cast<std::uint8_t>(0x80 >> bit);
+                    }
+                    out << std::format("0x{:02x},", byte);
+                }
+            }
+        }
+        // 1 byte padding
+        out << "0x00";
+        if (si < count - 1) out << ",";
+        out << "\n";
+    }
+    out << "};\n";
+
+    // Per-sprite colors
+    out << std::format("\nstatic const unsigned char {}_colors[{}] = {{\n    ",
+                       name, count);
+    for (std::size_t si = 0; si < count; ++si) {
+        auto& cc = screen.cells[si].cell_colors;
+        // Per-sprite color: last entry in cell_colors
+        auto color = cc.empty() ? 0 : cc.back();
+        out << std::format("0x{:02x}", color);
+        if (si < count - 1) out << ",";
+    }
+    out << "\n};\n";
+
+    return out.str();
+}
+
+ConvertResult convert_header(const std::uint8_t* input_data,
+                             std::size_t input_size,
+                             const Options& options,
+                             const std::string& name) {
+    bool is_charset = is_charset_mode(options.mode);
+    bool is_sprite = (options.mode == "sprite-hi" || options.mode == "sprite-mc");
+
+    if (!is_charset && !is_sprite)
+        return {{}, 0, 0, "Header export only for charset and sprite modes"};
+
+    if (is_charset) {
+        bool mc = (options.mode == "charset-mc");
+
+        auto target_w = options.width > 0
+            ? static_cast<std::size_t>(options.width) : std::size_t{320};
+        auto target_h = options.height > 0
+            ? static_cast<std::size_t>(options.height) : std::size_t{200};
+
+        auto image = load_and_preprocess(input_data, input_size, options,
+                                          target_w, target_h);
+        if (!image) return {{}, 0, 0, image.error().message};
+
+        if (mc) {
+            auto logical_w = image->width() / 2;
+            auto scaled = scale::bicubic(*image, logical_w, image->height());
+            if (!scaled) return {{}, 0, 0, scaled.error().message};
+            image = std::move(scaled);
+        }
+
+        auto pal = palette::by_name(options.palette);
+        if (pal.colors.empty()) pal = palette::by_name("pepto");
+
+        auto ds = make_dither_settings(options);
+        auto result = charset::convert(*image, pal, mc, ds);
+        if (!result) return {{}, 0, 0, result.error().message};
+
+        auto header_text = charset::generate_header(*result, name);
+        std::vector<std::uint8_t> bytes(header_text.begin(), header_text.end());
+
+        auto preview = charset::render(*result, pal);
+        return {std::move(bytes),
+                static_cast<int>(preview.width()),
+                static_cast<int>(preview.height()), ""};
+    }
+
+    // Sprite mode
+    auto pipe = run_pipeline(input_data, input_size, options);
+    if (!pipe) return {{}, 0, 0, pipe.error().message};
+
+    auto mode = parse_mode(options.mode);
+    auto params = vic2::get_mode_params(mode);
+    params.screen_width = options.width > 0
+        ? static_cast<std::size_t>(options.width) : params.screen_width;
+    params.screen_height = options.height > 0
+        ? static_cast<std::size_t>(options.height) : params.screen_height;
+
+    auto header_text = generate_sprite_header(pipe->screen, params, name);
+    std::vector<std::uint8_t> bytes(header_text.begin(), header_text.end());
+
+    return {std::move(bytes),
+            static_cast<int>(pipe->rendered.width()),
+            static_cast<int>(pipe->rendered.height()), ""};
 }
 
 } // namespace png2c64::api
