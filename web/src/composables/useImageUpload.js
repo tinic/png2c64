@@ -1,21 +1,27 @@
-import { ref } from 'vue'
+import { ref, onUnmounted } from 'vue'
 
 export function useImageUpload() {
   const imageBytes = ref(null)
   const imageName = ref('')
+  const imageUrl = ref(null)
   const dragOver = ref(false)
 
-  async function readFile(file) {
-    const buf = await file.arrayBuffer()
-    return new Uint8Array(buf)
+  function revokeUrl() {
+    if (imageUrl.value) {
+      URL.revokeObjectURL(imageUrl.value)
+      imageUrl.value = null
+    }
   }
 
   async function handleFiles(files) {
     if (!files.length) return
     const file = files[0]
     if (!file.type.startsWith('image/')) return
-    imageBytes.value = await readFile(file)
+    const buf = await file.arrayBuffer()
+    imageBytes.value = new Uint8Array(buf)
     imageName.value = file.name
+    revokeUrl()
+    imageUrl.value = URL.createObjectURL(file)
   }
 
   function onDrop(e) {
@@ -41,5 +47,7 @@ export function useImageUpload() {
     input.click()
   }
 
-  return { imageBytes, imageName, dragOver, onDrop, onDragOver, onDragLeave, openPicker }
+  onUnmounted(revokeUrl)
+
+  return { imageBytes, imageName, imageUrl, dragOver, onDrop, onDragOver, onDragLeave, openPicker }
 }

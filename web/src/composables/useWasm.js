@@ -33,7 +33,12 @@ export function useWasm() {
     return module.value.convert(imageBytes, options)
   }
 
+  function convertPRG(imageBytes, options) {
+    if (!module.value) throw new Error('WASM not loaded')
+    return module.value.convertPRG(imageBytes, options)
+  }
+
   init()
 
-  return { module, loading, error, convertRGBA, convertPNG }
+  return { module, loading, error, convertRGBA, convertPNG, convertPRG }
 }

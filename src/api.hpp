@@ -40,4 +40,10 @@ ConvertResult convert_rgba(const std::uint8_t* input_data,
                            std::size_t input_size,
                            const Options& options);
 
+// Convert raw image data and return PRG bytes (Koala/Hires bitmap).
+// Only works for multicolor and hires modes.
+ConvertResult convert_prg(const std::uint8_t* input_data,
+                          std::size_t input_size,
+                          const Options& options);
+
 } // namespace png2c64::api

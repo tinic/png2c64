@@ -2,7 +2,7 @@
 import { ref, reactive, watch, nextTick } from 'vue'
 import { useWasm } from '../composables/useWasm.js'
 import { useImageUpload } from '../composables/useImageUpload.js'
-import { MODES, PALETTES, DITHER_METHODS, SLIDERS, defaultOptions, isSpriteMode, spriteGridDimensions } from '../lib/options.js'
+import { MODES, PALETTES, DITHER_METHODS, SLIDERS, defaultOptions, isSpriteMode, spriteGridDimensions, hasPrgExport } from '../lib/options.js'
 
 import InputNumber from 'primevue/inputnumber'
 
@@ -14,8 +14,8 @@ import ProgressSpinner from 'primevue/progressspinner'
 import FileUpload from 'primevue/fileupload'
 import Panel from 'primevue/panel'
 
-const { loading: wasmLoading, error: wasmError, convertRGBA, convertPNG } = useWasm()
-const { imageBytes, imageName, dragOver, onDrop, onDragOver, onDragLeave, openPicker } = useImageUpload()
+const { loading: wasmLoading, error: wasmError, convertRGBA, convertPNG, convertPRG } = useWasm()
+const { imageBytes, imageName, imageUrl, dragOver, onDrop, onDragOver, onDragLeave, openPicker } = useImageUpload()
 
 const options = reactive(defaultOptions())
 const canvasRef = ref(null)
@@ -112,6 +112,26 @@ function downloadPNG() {
   }
 }
 
+function downloadPRG() {
+  if (!imageBytes.value) return
+  try {
+    const result = convertPRG(imageBytes.value, buildWasmOptions())
+    if (result.error) {
+      errorMsg.value = result.error
+      return
+    }
+    const blob = new Blob([result.prg], { type: 'application/octet-stream' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = (imageName.value || 'image').replace(/\.[^.]+$/, '') + '-c64.prg'
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    errorMsg.value = e.message
+  }
+}
+
 function resetOptions() {
   Object.assign(options, defaultOptions())
 }
@@ -144,16 +164,23 @@ function onFileSelect(event) {
           <!-- Upload -->
           <Panel header="Image">
             <div
-              class="drop-zone border-2 border-dashed border-round-lg p-4 text-center cursor-pointer"
-              :class="{ 'border-primary': dragOver, 'surface-hover': !dragOver }"
+              class="drop-zone border-2 border-round-lg cursor-pointer overflow-hidden"
+              :class="{
+                'border-primary': dragOver,
+                'border-dashed p-4 text-center': !imageUrl,
+                'border-transparent': imageUrl && !dragOver,
+              }"
               @drop="onDrop"
               @dragover="onDragOver"
               @dragleave="onDragLeave"
               @click="openPicker"
             >
-              <template v-if="imageBytes">
-                <div class="font-semibold text-green-400 text-sm mb-1 overflow-hidden text-overflow-ellipsis">{{ imageName }}</div>
-                <div class="text-xs text-color-secondary">Click or drop to change</div>
+              <template v-if="imageUrl">
+                <img :src="imageUrl" class="original-preview w-full border-round" />
+                <div class="text-xs text-color-secondary mt-2 px-1 flex justify-content-between">
+                  <span class="white-space-nowrap overflow-hidden text-overflow-ellipsis">{{ imageName }}</span>
+                  <span class="white-space-nowrap ml-2">Click to change</span>
+                </div>
               </template>
               <template v-else>
                 <i class="pi pi-image text-4xl text-color-secondary mb-2"></i>
@@ -233,9 +260,12 @@ function onFileSelect(event) {
           </Panel>
 
           <!-- Actions -->
-          <div class="flex gap-2">
-            <Button label="Reset" icon="pi pi-refresh" severity="secondary" outlined class="flex-1" @click="resetOptions" />
-            <Button label="Download PNG" icon="pi pi-download" class="flex-1" :disabled="!imageBytes || converting" @click="downloadPNG" />
+          <div class="flex flex-column gap-2">
+            <div class="flex gap-2">
+              <Button label="PNG" icon="pi pi-download" class="flex-1" :disabled="!imageBytes || converting" @click="downloadPNG" />
+              <Button label="PRG" icon="pi pi-download" class="flex-1" severity="info" :disabled="!imageBytes || converting || !hasPrgExport(options.mode)" @click="downloadPRG" />
+            </div>
+            <Button label="Reset" icon="pi pi-refresh" severity="secondary" outlined class="w-full" @click="resetOptions" />
           </div>
 
         </div>
@@ -291,6 +321,12 @@ function onFileSelect(event) {
 }
 .drop-zone:hover {
   border-color: var(--p-primary-color) !important;
+}
+
+.original-preview {
+  display: block;
+  max-height: 200px;
+  object-fit: contain;
 }
 
 .preview-container {

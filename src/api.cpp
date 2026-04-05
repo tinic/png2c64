@@ -1,5 +1,6 @@
 #include "api.hpp"
 #include "color_space.hpp"
+#include "prg.hpp"
 
 #include <stb_image.h>
 #include "dither.hpp"
@@ -47,10 +48,15 @@ dither::Method parse_dither(const std::string& s) {
     return dither::Method::checker;
 }
 
+struct PipelineResult {
+    Image rendered;
+    quantize::ScreenResult screen;
+};
+
 // Core pipeline: load -> scale -> preprocess -> quantize -> dither -> render
-Result<Image> run_pipeline(const std::uint8_t* input_data,
-                           std::size_t input_size,
-                           const Options& options) {
+Result<PipelineResult> run_pipeline(const std::uint8_t* input_data,
+                                    std::size_t input_size,
+                                    const Options& options) {
     // Load from memory via stb_image
     int w{}, h{}, channels{};
     auto* raw = stbi_load_from_memory(input_data,
@@ -156,7 +162,7 @@ Result<Image> run_pipeline(const std::uint8_t* input_data,
         }
     }
 
-    return output;
+    return PipelineResult{std::move(output), *std::move(screen)};
 }
 
 } // namespace
@@ -166,12 +172,12 @@ ConvertResult convert(const std::uint8_t* input_data, std::size_t input_size,
     auto result = run_pipeline(input_data, input_size, options);
     if (!result) return {{}, 0, 0, result.error().message};
 
-    auto png = png_io::encode(*result);
+    auto png = png_io::encode(result->rendered);
     if (!png) return {{}, 0, 0, png.error().message};
 
     return {*std::move(png),
-            static_cast<int>(result->width()),
-            static_cast<int>(result->height()), ""};
+            static_cast<int>(result->rendered.width()),
+            static_cast<int>(result->rendered.height()), ""};
 }
 
 ConvertResult convert_rgba(const std::uint8_t* input_data,
@@ -180,14 +186,15 @@ ConvertResult convert_rgba(const std::uint8_t* input_data,
     auto result = run_pipeline(input_data, input_size, options);
     if (!result) return {{}, 0, 0, result.error().message};
 
-    auto w = result->width();
-    auto h = result->height();
+    auto& img = result->rendered;
+    auto w = img.width();
+    auto h = img.height();
     std::vector<std::uint8_t> rgba(w * h * 4);
 
     for (std::size_t i = 0; i < w * h; ++i) {
         auto y = i / w;
         auto x = i % w;
-        auto srgb = color_space::linear_to_srgb((*result)[x, y]).clamped();
+        auto srgb = color_space::linear_to_srgb(img[x, y]).clamped();
         auto base = i * 4;
         rgba[base + 0] = static_cast<std::uint8_t>(std::lround(srgb.r * 255.0f));
         rgba[base + 1] = static_cast<std::uint8_t>(std::lround(srgb.g * 255.0f));
@@ -196,6 +203,20 @@ ConvertResult convert_rgba(const std::uint8_t* input_data,
     }
 
     return {std::move(rgba), static_cast<int>(w), static_cast<int>(h), ""};
+}
+
+ConvertResult convert_prg(const std::uint8_t* input_data,
+                          std::size_t input_size,
+                          const Options& options) {
+    auto result = run_pipeline(input_data, input_size, options);
+    if (!result) return {{}, 0, 0, result.error().message};
+
+    auto prg_data = prg::from_screen(result->screen);
+    if (!prg_data) return {{}, 0, 0, prg_data.error().message};
+
+    return {std::move(prg_data->bytes),
+            static_cast<int>(result->rendered.width()),
+            static_cast<int>(result->rendered.height()), ""};
 }
 
 } // namespace png2c64::api

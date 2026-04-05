@@ -24,6 +24,7 @@ set(PNG2C64_CORE_SOURCES
     src/quantize.cpp
     src/dither.cpp
     src/charset.cpp
+    src/prg.cpp
     src/api.cpp
 )
 
@@ -56,7 +57,7 @@ else()
         src/main.cpp
         ${PNG2C64_CORE_SOURCES}
     )
-    target_include_directories(png2c64 PRIVATE src)
+    target_include_directories(png2c64 PRIVATE src ${CMAKE_SOURCE_DIR}/third_party)
     target_link_libraries(png2c64 PRIVATE stb)
     target_compile_options(png2c64 PRIVATE ${PNG2C64_WARNING_FLAGS})
 

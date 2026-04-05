@@ -3,6 +3,7 @@
 #include "palette.hpp"
 #include "png_io.hpp"
 #include "preprocess.hpp"
+#include "prg.hpp"
 #include "quantize.hpp"
 #include "scale.hpp"
 #include "types.hpp"
@@ -1077,6 +1078,19 @@ int main(int argc, char* argv[]) {
     if (!save_result) {
         std::println(stderr, "Error: {}", save_result.error().message);
         return 1;
+    }
+
+    // Export PRG alongside PNG (for bitmap modes)
+    auto prg_result = prg::from_screen(*screen);
+    if (prg_result) {
+        auto prg_path = config->output_path;
+        auto dot = prg_path.rfind('.');
+        if (dot != std::string::npos) prg_path = prg_path.substr(0, dot);
+        prg_path += ".prg";
+        auto wr = prg::write(prg_path, *prg_result);
+        if (wr) {
+            std::println("PRG: {} ({} bytes)", prg_path, prg_result->bytes.size());
+        }
     }
 
     std::println("Done! Mode: {}, palette: {}, total error: {:.4f}",

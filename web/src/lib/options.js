@@ -76,6 +76,10 @@ export function isSpriteMode(mode) {
   return mode === 'sprite-hi' || mode === 'sprite-mc'
 }
 
+export function hasPrgExport(mode) {
+  return mode === 'multicolor' || mode === 'hires'
+}
+
 // Compute width/height from sprite grid for the WASM API
 export function spriteGridDimensions(mode, sx, sy) {
   if (mode === 'sprite-hi')  return { width: sx * 24, height: sy * 21 }

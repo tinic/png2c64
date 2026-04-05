@@ -88,7 +88,33 @@ val js_convert_rgba(val input_array, val js_opts) {
     return obj;
 }
 
+// JS API: convertPRG(Uint8Array, options) -> { prg: Uint8Array, width, height, error }
+val js_convert_prg(val input_array, val js_opts) {
+    auto length = input_array["length"].as<std::size_t>();
+    std::vector<std::uint8_t> input(length);
+    for (std::size_t i = 0; i < length; ++i)
+        input[i] = input_array[i].as<std::uint8_t>();
+
+    auto opts = parse_js_options(js_opts);
+    auto result = convert_prg(input.data(), input.size(), opts);
+
+    val obj = val::object();
+    obj.set("width", result.width);
+    obj.set("height", result.height);
+    obj.set("error", result.error);
+
+    if (!result.png_data.empty()) {
+        val prg = val::global("Uint8Array").new_(result.png_data.size());
+        for (std::size_t i = 0; i < result.png_data.size(); ++i)
+            prg.set(i, result.png_data[i]);
+        obj.set("prg", prg);
+    }
+
+    return obj;
+}
+
 EMSCRIPTEN_BINDINGS(png2c64) {
     function("convert", &js_convert);
     function("convertRGBA", &js_convert_rgba);
+    function("convertPRG", &js_convert_prg);
 }
