@@ -4,32 +4,103 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <numbers>
 #include <vector>
 
 namespace png2c64::preprocess {
 
-void apply(Image& image, const Settings& s) {
+namespace {
+
+// 3x3 unsharp mask: sharpen = strength of the effect
+void apply_sharpen(Image& image, float strength) {
+    if (strength <= 0.0f) return;
+
+    auto w = image.width();
+    auto h = image.height();
+    // Work on a copy of L channel in OKLab
+    std::vector<float> L_orig(w * h);
+    for (std::size_t y = 0; y < h; ++y)
+        for (std::size_t x = 0; x < w; ++x)
+            L_orig[y * w + x] = color_space::linear_to_oklab(image[x, y]).L;
+
+    for (std::size_t y = 1; y + 1 < h; ++y) {
+        for (std::size_t x = 1; x + 1 < w; ++x) {
+            // 3x3 box blur of L
+            float blur = 0.0f;
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx)
+                    blur += L_orig[(y + static_cast<std::size_t>(dy)) * w +
+                                   (x + static_cast<std::size_t>(dx))];
+            blur /= 9.0f;
+
+            auto lab = color_space::linear_to_oklab(image[x, y]);
+            float detail = lab.L - blur;
+            lab.L += detail * strength;
+            image[x, y] = color_space::oklab_to_linear(lab).clamped();
+        }
+    }
+}
+
+// Black/white point: remap L so that black_point maps to 0 and (1-white_point) maps to 1
+void apply_levels(Image& image, float black_point, float white_point) {
+    if (black_point <= 0.0f && white_point <= 0.0f) return;
+
+    float lo = black_point;
+    float hi = 1.0f - white_point;
+    if (hi <= lo) hi = lo + 0.01f;
+
     for (auto& pixel : image.pixels()) {
-        // 1. Gamma (in linear space, before anything else)
+        auto lab = color_space::linear_to_oklab(pixel);
+        lab.L = (lab.L - lo) / (hi - lo);
+        lab.L = std::clamp(lab.L, 0.0f, 1.0f);
+        pixel = color_space::oklab_to_linear(lab).clamped();
+    }
+}
+
+} // namespace
+
+void apply(Image& image, const Settings& s) {
+    // 1. Gamma (in linear space, before anything else)
+    for (auto& pixel : image.pixels()) {
         if (s.gamma != 1.0f) {
             pixel.r = std::pow(std::max(pixel.r, 0.0f), s.gamma);
             pixel.g = std::pow(std::max(pixel.g, 0.0f), s.gamma);
             pixel.b = std::pow(std::max(pixel.b, 0.0f), s.gamma);
         }
+    }
 
-        // 2-4. Brightness, contrast, saturation in OKLab space
-        // where L is perceptually uniform and 0.5 is actual mid-grey.
+    // 2. Sharpen (before color adjustments, operates on spatial detail)
+    apply_sharpen(image, s.sharpen);
+
+    // 3. Black/white point (levels)
+    apply_levels(image, s.black_point, s.white_point);
+
+    // 4-7. Brightness, contrast, saturation, hue in OKLab space
+    float hue_rad = s.hue_shift * (std::numbers::pi_v<float> / 180.0f);
+    float cos_h = std::cos(hue_rad);
+    float sin_h = std::sin(hue_rad);
+    bool do_hue = (std::abs(s.hue_shift) > 0.1f);
+
+    for (auto& pixel : image.pixels()) {
         auto lab = color_space::linear_to_oklab(pixel);
 
-        // Brightness: additive shift on L
+        // Brightness
         lab.L += s.brightness;
 
-        // Contrast: scale around L=0.5 (perceptual mid-grey)
+        // Contrast
         lab.L = (lab.L - 0.5f) * s.contrast + 0.5f;
 
-        // Saturation: scale chroma (a, b) around zero
+        // Saturation
         lab.a *= s.saturation;
         lab.b *= s.saturation;
+
+        // Hue rotation: rotate (a, b) vector
+        if (do_hue) {
+            float a2 = lab.a * cos_h - lab.b * sin_h;
+            float b2 = lab.a * sin_h + lab.b * cos_h;
+            lab.a = a2;
+            lab.b = b2;
+        }
 
         pixel = color_space::oklab_to_linear(lab).clamped();
     }
@@ -40,7 +111,6 @@ void match_palette_range(Image& image, const Palette& palette,
     auto pixel_count = image.width() * image.height();
     if (pixel_count == 0 || palette.colors.empty()) return;
 
-    // 1. Compute OKLab extent of the palette
     float pal_L_min = 1e9f, pal_L_max = -1e9f;
     float pal_a_min = 1e9f, pal_a_max = -1e9f;
     float pal_b_min = 1e9f, pal_b_max = -1e9f;
@@ -55,7 +125,6 @@ void match_palette_range(Image& image, const Palette& palette,
         pal_b_max = std::max(pal_b_max, lab.b);
     }
 
-    // Apply margin: shrink target range inward
     auto apply_margin = [margin](float lo, float hi) {
         float span = hi - lo;
         return std::pair{lo + span * margin, hi - span * margin};
@@ -65,7 +134,6 @@ void match_palette_range(Image& image, const Palette& palette,
     auto [tgt_a_min, tgt_a_max] = apply_margin(pal_a_min, pal_a_max);
     auto [tgt_b_min, tgt_b_max] = apply_margin(pal_b_min, pal_b_max);
 
-    // 2. Convert all image pixels to OKLab and collect per-channel values
     std::vector<color_space::OKLab> image_lab(pixel_count);
     std::vector<float> Ls(pixel_count), As(pixel_count), Bs(pixel_count);
 
@@ -78,7 +146,6 @@ void match_palette_range(Image& image, const Palette& palette,
         Bs[i] = image_lab[i].b;
     }
 
-    // 3. Find image extent using percentiles (robust to outliers)
     auto percentile_range = [percentile](std::vector<float>& vals) {
         std::ranges::sort(vals);
         auto n = vals.size();
@@ -95,7 +162,6 @@ void match_palette_range(Image& image, const Palette& palette,
     auto [src_a_min, src_a_max] = percentile_range(As);
     auto [src_b_min, src_b_max] = percentile_range(Bs);
 
-    // 4. Remap each pixel: src range -> target range per channel
     auto remap = [](float val, float src_lo, float src_hi,
                     float dst_lo, float dst_hi) -> float {
         float src_span = src_hi - src_lo;
@@ -112,7 +178,6 @@ void match_palette_range(Image& image, const Palette& palette,
         lab.a = remap(lab.a, src_a_min, src_a_max, tgt_a_min, tgt_a_max);
         lab.b = remap(lab.b, src_b_min, src_b_max, tgt_b_min, tgt_b_max);
 
-        // Convert back to linear RGB and store
         auto y = i / image.width();
         auto x = i % image.width();
         image[x, y] = color_space::oklab_to_linear(lab).clamped();

@@ -18,6 +18,10 @@ struct Options {
     float dither_strength = 1.0f;
     float error_clamp = 0.8f;
     float adaptive = 0.0f;
+    float hue_shift = 0.0f;
+    float sharpen = 0.0f;
+    float black_point = 0.0f;
+    float white_point = 0.0f;
     bool serpentine = true;
     int width = 0;   // 0 = auto (mode default)
     int height = 0;

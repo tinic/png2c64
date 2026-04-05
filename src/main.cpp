@@ -78,7 +78,11 @@ void print_usage() {
         "  --brightness <float>            Brightness -1.0 to 1.0 (default: 0.0)\n"
         "  --contrast <float>              Contrast 0.0-2.0 (default: 1.0)\n"
         "  --saturation <float>            Saturation 0.0-2.0 (default: 1.0)\n"
-        "  --gamma <float>                 Gamma 0.1-4.0 (default: 1.0)\n"
+        "  --gamma <float>                 Gamma 0.1-8.0 (default: 1.0)\n"
+        "  --hue-shift <float>             Hue rotation -180 to 180 degrees (default: 0)\n"
+        "  --sharpen <float>               Unsharp mask 0.0-2.0 (default: 0.0)\n"
+        "  --black-point <float>           Black point clip 0.0-0.4 (default: 0.0)\n"
+        "  --white-point <float>           White point clip 0.0-0.4 (default: 0.0)\n"
         "  --width <int>                   Override output width\n"
         "  --height <int>                  Override output height\n"
         "  --sprites-x <int>              Sprite sheet columns (default: 1)\n"
@@ -167,6 +171,14 @@ Result<Config> parse_args(int argc, char* argv[]) {
                 config.preprocess.saturation = std::stof(std::string(val));
             } else if (arg == "--gamma") {
                 config.preprocess.gamma = std::stof(std::string(val));
+            } else if (arg == "--hue-shift") {
+                config.preprocess.hue_shift = std::stof(std::string(val));
+            } else if (arg == "--sharpen") {
+                config.preprocess.sharpen = std::stof(std::string(val));
+            } else if (arg == "--black-point") {
+                config.preprocess.black_point = std::stof(std::string(val));
+            } else if (arg == "--white-point") {
+                config.preprocess.white_point = std::stof(std::string(val));
             } else if (arg == "--width") {
                 config.width = static_cast<std::size_t>(std::stoul(std::string(val)));
             } else if (arg == "--height") {
@@ -728,13 +740,17 @@ void run_interactive(const Image& scaled_image, Config& config,
                      "  \033[33mc/C\033[0m contrast \033[1m{:<12.2f}\033[0m\033[K",
                      pp.brightness, pp.contrast);
         std::println(" \033[33mt/T\033[0m saturation \033[1m{:<12.2f}\033[0m"
-                     "  \033[33me/E\033[0m errclamp \033[1m{:<12.2f}\033[0m\033[K",
-                     pp.saturation, ds.error_clamp);
-        std::println(" \033[33ma/A\033[0m adaptive   \033[1m{:<12.2f}\033[0m"
-                     "  \033[33m x \033[0m serpentine \033[1m{}\033[0m\033[K",
-                     ds.adaptive, ds.serpentine ? "on" : "off");
-        std::println(" \033[33m r \033[0m reset      \033[33m w \033[0m save"
-                     "      \033[33m q \033[0m quit\033[K");
+                     "  \033[33mh/H\033[0m hue      \033[1m{:<12.1f}\033[0m\033[K",
+                     pp.saturation, pp.hue_shift);
+        std::println(" \033[33mn/N\033[0m sharpen    \033[1m{:<12.2f}\033[0m"
+                     "  \033[33m[/]\033[0m bk/wt pt \033[1m{:.2f}/{:.2f}\033[0m\033[K",
+                     pp.sharpen, pp.black_point, pp.white_point);
+        std::println(" \033[33me/E\033[0m errclamp   \033[1m{:<12.2f}\033[0m"
+                     "  \033[33ma/A\033[0m adaptive \033[1m{:<12.2f}\033[0m\033[K",
+                     ds.error_clamp, ds.adaptive);
+        std::println(" \033[33m x \033[0m serpentine \033[1m{:<12}\033[0m"
+                     "  \033[33m r \033[0m reset  \033[33m w \033[0m save  \033[33m q \033[0m quit\033[K",
+                     ds.serpentine ? "on" : "off");
         std::println("\033[K");
 
         iterm2_display_image(output, 3);
@@ -791,6 +807,20 @@ void run_interactive(const Image& scaled_image, Config& config,
         // Saturation
         case 't': pp.saturation = std::min(pp.saturation + step, 3.0f); break;
         case 'T': pp.saturation = std::max(pp.saturation - step, 0.0f); break;
+
+        // Hue shift
+        case 'h': pp.hue_shift = std::min(pp.hue_shift + 5.0f, 180.0f); break;
+        case 'H': pp.hue_shift = std::max(pp.hue_shift - 5.0f, -180.0f); break;
+
+        // Sharpen
+        case 'n': pp.sharpen = std::min(pp.sharpen + step, 2.0f); break;
+        case 'N': pp.sharpen = std::max(pp.sharpen - step, 0.0f); break;
+
+        // Black/white point
+        case '[': pp.black_point = std::min(pp.black_point + 0.01f, 0.4f); break;
+        case '{': pp.black_point = std::max(pp.black_point - 0.01f, 0.0f); break;
+        case ']': pp.white_point = std::min(pp.white_point + 0.01f, 0.4f); break;
+        case '}': pp.white_point = std::max(pp.white_point - 0.01f, 0.0f); break;
 
         // Error clamp
         case 'e': ds.error_clamp = std::min(ds.error_clamp + step, 3.0f); break;

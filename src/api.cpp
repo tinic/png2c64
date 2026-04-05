@@ -95,6 +95,10 @@ Result<Image> load_and_preprocess(const std::uint8_t* input_data,
     pp.brightness = options.brightness;
     pp.contrast = options.contrast;
     pp.saturation = options.saturation;
+    pp.hue_shift = options.hue_shift;
+    pp.sharpen = options.sharpen;
+    pp.black_point = options.black_point;
+    pp.white_point = options.white_point;
     preprocess::apply(image, pp);
 
     auto pal = palette::by_name(options.palette);

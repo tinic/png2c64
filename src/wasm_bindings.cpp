@@ -29,6 +29,14 @@ Options parse_js_options(val js_opts) {
         opts.error_clamp = js_opts["errorClamp"].as<float>();
     if (js_opts.hasOwnProperty("adaptive"))
         opts.adaptive = js_opts["adaptive"].as<float>();
+    if (js_opts.hasOwnProperty("hueShift"))
+        opts.hue_shift = js_opts["hueShift"].as<float>();
+    if (js_opts.hasOwnProperty("sharpen"))
+        opts.sharpen = js_opts["sharpen"].as<float>();
+    if (js_opts.hasOwnProperty("blackPoint"))
+        opts.black_point = js_opts["blackPoint"].as<float>();
+    if (js_opts.hasOwnProperty("whitePoint"))
+        opts.white_point = js_opts["whitePoint"].as<float>();
     if (js_opts.hasOwnProperty("serpentine"))
         opts.serpentine = js_opts["serpentine"].as<bool>();
     if (js_opts.hasOwnProperty("width"))

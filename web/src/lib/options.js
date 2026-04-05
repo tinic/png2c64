@@ -52,14 +52,22 @@ export const DITHER_METHODS = [
 export const SLIDERS = [
   { key: 'gamma',          label: 'Gamma',       min: 0.1, max: 5.0, step: 0.05, default: 1.0,
     tip: 'Power curve applied before color matching. >1 darkens midtones, <1 brightens them.' },
+  { key: 'ditherStrength', label: 'Strength',    min: 0,   max: 3.0, step: 0.05, default: 1.0,
+    tip: 'Dithering intensity. 0 = no dithering effect, 1 = standard, >1 = exaggerated.' },
   { key: 'brightness',     label: 'Brightness',  min: -1,  max: 1.0, step: 0.05, default: 0.0,
     tip: 'Additive lightness shift in perceptual OKLab space.' },
   { key: 'contrast',       label: 'Contrast',    min: 0,   max: 3.0, step: 0.05, default: 1.0,
     tip: 'Scale around perceptual mid-grey. 1.0 = no change, >1 increases contrast.' },
   { key: 'saturation',     label: 'Saturation',  min: 0,   max: 3.0, step: 0.05, default: 1.0,
     tip: 'Chroma scaling in OKLab space. 0 = greyscale, 1 = original, >1 = boosted color.' },
-  { key: 'ditherStrength', label: 'Strength',    min: 0,   max: 3.0, step: 0.05, default: 1.0,
-    tip: 'Dithering intensity. 0 = no dithering effect, 1 = standard, >1 = exaggerated.' },
+  { key: 'hueShift',       label: 'Hue',         min: -180, max: 180, step: 1.0,  default: 0.0,
+    tip: 'Rotate all colors in OKLab. Shifts hues to better match the C64 palette.' },
+  { key: 'sharpen',        label: 'Sharpen',     min: 0,   max: 2.0, step: 0.05, default: 0.0,
+    tip: 'Unsharp mask before conversion. Enhances edges lost to downscaling.' },
+  { key: 'blackPoint',     label: 'Black Pt',    min: 0,   max: 0.4, step: 0.01, default: 0.0,
+    tip: 'Clip the darkest fraction of the image. Deepens blacks.' },
+  { key: 'whitePoint',     label: 'White Pt',    min: 0,   max: 0.4, step: 0.01, default: 0.0,
+    tip: 'Clip the brightest fraction of the image. Cleans up highlights.' },
 ]
 
 // These only apply to error diffusion dither methods
