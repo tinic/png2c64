@@ -1,10 +1,28 @@
 # png2c64
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Web App](https://img.shields.io/badge/Try_it-png2c64.app-brightgreen)](https://png2c64.app)
+[![C++26](https://img.shields.io/badge/C%2B%2B-26-blue.svg)](https://en.cppreference.com/w/cpp/26)
+
 Convert images to Commodore 64 VIC-II formats with perceptual color matching, dithering, and brute-force quantization.
 
-**[Try it in your browser at png2c64.app](https://png2c64.app)** — no installation required.
+**[Try it in your browser at png2c64.app](https://png2c64.app)** — no installation required, runs entirely client-side via WebAssembly.
 
-Built for C64 demo scene production. All color operations use OKLab perceptual color space. Multithreaded.
+Built for C64 demo scene production. All color operations use [OKLab](https://bottosson.github.io/posts/oklab/) perceptual color space. Multithreaded native CLI + WASM web app.
+
+## Why png2c64?
+
+| Feature | png2c64 | Typical converters |
+|---|---|---|
+| Color matching | OKLab perceptual space | RGB euclidean |
+| Dither-aware quantization | Yes — picks colors that dither well together | No — picks nearest colors, then dithers |
+| Dithering modes | 17 (ordered, error diffusion, line-based, 2:1-aware) | 1-3 |
+| Preprocessing | OKLab contrast/saturation/hue, sharpen, levels | Basic RGB |
+| Interactive tuning | CLI + web with live preview | Batch only |
+| Palette range matching | Automatic OKLab extent mapping | Manual |
+| CRT simulation | PAL bandwidth, scanlines, phosphor bloom | None |
+| Export formats | PNG, PRG (with displayer), Koala, Art Studio, C headers | 1-2 formats |
+| Runs in browser | Yes (WASM) | No |
 
 ## Examples
 
