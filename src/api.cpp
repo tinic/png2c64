@@ -27,6 +27,8 @@ vic2::Mode parse_mode(const std::string& s) {
     if (s == "multicolor") return vic2::Mode::multicolor;
     if (s == "sprite-hi") return vic2::Mode::sprite_hires;
     if (s == "sprite-mc") return vic2::Mode::sprite_multicolor;
+    if (s == "fli") return vic2::Mode::fli;
+    if (s == "afli") return vic2::Mode::afli;
     return vic2::Mode::multicolor;
 }
 
@@ -202,10 +204,26 @@ Result<PipelineResult> run_pipeline(const std::uint8_t* input_data,
         auto px = cell_x * params.cell_width * pixel_stretch;
         auto py = cell_y * params.cell_height;
 
+        bool fli = vic2::is_fli_mode(mode);
         std::size_t pi = 0;
         for (std::size_t dy = 0; dy < params.cell_height; ++dy) {
             for (std::size_t dx = 0; dx < params.cell_width; ++dx) {
-                auto color_idx = cell.cell_colors[cell.pixel_indices[pi]];
+                std::uint8_t color_idx;
+                if (fli && mode == vic2::Mode::fli) {
+                    std::array<std::uint8_t, 4> rc = {
+                        cell.cell_colors[0], cell.cell_colors[2 + dy * 2],
+                        cell.cell_colors[3 + dy * 2], cell.cell_colors[1]};
+                    color_idx = rc[cell.pixel_indices[pi]];
+                } else if (fli && mode == vic2::Mode::afli) {
+                    // AFLI FLI bug: on forced bad lines (rows 1-7),
+                    // VIC-II reads $FF from floating bus → color 15
+                    if (cell_x < vic2::fli_bug_columns && dy > 0)
+                        color_idx = 15;
+                    else
+                        color_idx = cell.cell_colors[dy * 2 + cell.pixel_indices[pi]];
+                } else {
+                    color_idx = cell.cell_colors[cell.pixel_indices[pi]];
+                }
                 auto color = pal.colors[color_idx];
                 auto out_x = px + dx * pixel_stretch;
                 for (std::size_t s = 0; s < pixel_stretch; ++s)

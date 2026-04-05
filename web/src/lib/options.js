@@ -1,6 +1,8 @@
 export const MODES = [
   { value: 'multicolor', label: 'Multicolor (160x200)' },
   { value: 'hires', label: 'Hi-Res (320x200)' },
+  { value: 'fli', label: 'FLI Multicolor (160x200)' },
+  { value: 'afli', label: 'AFLI Hi-Res (320x200)' },
   { value: 'charset-mc', label: 'Charset Multicolor' },
   { value: 'charset-hi', label: 'Charset Hi-Res' },
   { value: 'sprite-mc', label: 'Sprite Multicolor' },
@@ -110,7 +112,7 @@ export function isSpriteMode(mode) {
 }
 
 export function hasPrgExport(mode) {
-  return mode === 'multicolor' || mode === 'hires'
+  return mode === 'multicolor' || mode === 'hires' || mode === 'fli' || mode === 'afli'
 }
 
 export function isCharsetMode(mode) {

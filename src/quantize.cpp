@@ -216,6 +216,171 @@ CellResult quantize_cell_multicolor(
 }
 
 // ---------------------------------------------------------------------------
+// FLI multicolor: per-row screen colors + shared colorram
+// cell_colors = [bg, colorram, r0_hi, r0_lo, ..., r7_hi, r7_lo] (18 entries)
+// ---------------------------------------------------------------------------
+
+// Error for a single row (4 pixels) with 4 colors
+float row_error_4(const CellDistTable& table, std::size_t row_start,
+                  std::size_t row_pixels,
+                  std::uint8_t c0, std::uint8_t c1,
+                  std::uint8_t c2, std::uint8_t c3) {
+    float error = 0.0f;
+    for (std::size_t p = 0; p < row_pixels; ++p) {
+        auto pi = row_start + p;
+        error += std::min(std::min(table.dist[c0][pi], table.dist[c1][pi]),
+                          std::min(table.dist[c2][pi], table.dist[c3][pi]));
+    }
+    return error;
+}
+
+// Error for a single row (8 pixels) with 2 colors
+float row_error_2(const CellDistTable& table, std::size_t row_start,
+                  std::size_t row_pixels,
+                  std::uint8_t c0, std::uint8_t c1) {
+    float error = 0.0f;
+    for (std::size_t p = 0; p < row_pixels; ++p) {
+        auto pi = row_start + p;
+        error += std::min(table.dist[c0][pi], table.dist[c1][pi]);
+    }
+    return error;
+}
+
+CellResult quantize_cell_fli(
+    const CellDistTable& table, std::uint8_t bg_color,
+    const Palette& palette) {
+
+    auto n = static_cast<std::uint8_t>(palette.size());
+    constexpr std::size_t cell_w = 4;
+    constexpr std::size_t cell_h = 8;
+
+    float best_error = std::numeric_limits<float>::max();
+    std::uint8_t best_colorram = 0;
+    std::array<std::uint8_t, 16> best_screen{}; // [r0_hi, r0_lo, ..., r7_hi, r7_lo]
+
+    for (std::uint8_t cr = 0; cr < n; ++cr) {
+        if (cr == bg_color) continue;
+
+        float total = 0.0f;
+        std::array<std::uint8_t, 16> screen{};
+
+        for (std::size_t row = 0; row < cell_h; ++row) {
+            auto row_start = row * cell_w;
+            float best_row = std::numeric_limits<float>::max();
+            std::uint8_t best_hi = 0, best_lo = 0;
+
+            for (std::uint8_t i = 0; i < n; ++i) {
+                if (i == bg_color || i == cr) continue;
+                for (std::uint8_t j = i + 1; j < n; ++j) {
+                    if (j == bg_color || j == cr) continue;
+
+                    float err = row_error_4(table, row_start, cell_w,
+                                             bg_color, i, j, cr);
+                    if (err < best_row) {
+                        best_row = err;
+                        best_hi = i;
+                        best_lo = j;
+                    }
+                }
+            }
+
+            screen[row * 2] = best_hi;
+            screen[row * 2 + 1] = best_lo;
+            total += best_row;
+        }
+
+        if (total < best_error) {
+            best_error = total;
+            best_colorram = cr;
+            best_screen = screen;
+        }
+    }
+
+    // Build CellResult with per-row colors
+    // cell_colors = [bg, colorram, r0_hi, r0_lo, ..., r7_hi, r7_lo]
+    CellResult result;
+    result.cell_colors.resize(18);
+    result.cell_colors[0] = bg_color;
+    result.cell_colors[1] = best_colorram;
+    for (std::size_t i = 0; i < 16; ++i)
+        result.cell_colors[2 + i] = best_screen[i];
+
+    // Assign pixels: for each row, find nearest of the 4 row-specific colors
+    result.pixel_indices.resize(cell_w * cell_h);
+    result.error = 0.0f;
+    for (std::size_t row = 0; row < cell_h; ++row) {
+        std::array<std::uint8_t, 4> row_colors = {
+            bg_color, best_screen[row * 2], best_screen[row * 2 + 1], best_colorram
+        };
+        for (std::size_t col = 0; col < cell_w; ++col) {
+            auto pi = row * cell_w + col;
+            float best_d = std::numeric_limits<float>::max();
+            std::uint8_t best_idx = 0;
+            for (std::uint8_t c = 0; c < 4; ++c) {
+                float d = table.dist[row_colors[c]][pi];
+                if (d < best_d) { best_d = d; best_idx = c; }
+            }
+            result.pixel_indices[pi] = best_idx;
+            result.error += best_d;
+        }
+    }
+
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// AFLI hires: per-row 2 colors, no shared background or colorram
+// cell_colors = [r0_c0, r0_c1, r1_c0, r1_c1, ..., r7_c0, r7_c1] (16 entries)
+// ---------------------------------------------------------------------------
+
+CellResult quantize_cell_afli(
+    const CellDistTable& table, const Palette& palette) {
+
+    auto n = static_cast<std::uint8_t>(palette.size());
+    constexpr std::size_t cell_w = 8;
+    constexpr std::size_t cell_h = 8;
+
+    CellResult result;
+    result.cell_colors.resize(16);
+    result.pixel_indices.resize(cell_w * cell_h);
+    result.error = 0.0f;
+
+    for (std::size_t row = 0; row < cell_h; ++row) {
+        auto row_start = row * cell_w;
+        float best_row = std::numeric_limits<float>::max();
+        std::uint8_t best_c0 = 0, best_c1 = 1;
+
+        for (std::uint8_t i = 0; i < n; ++i) {
+            for (std::uint8_t j = i + 1; j < n; ++j) {
+                float err = row_error_2(table, row_start, cell_w, i, j);
+                if (err < best_row) {
+                    best_row = err;
+                    best_c0 = i;
+                    best_c1 = j;
+                }
+            }
+        }
+
+        result.cell_colors[row * 2] = best_c0;
+        result.cell_colors[row * 2 + 1] = best_c1;
+
+        // Assign pixels for this row
+        for (std::size_t col = 0; col < cell_w; ++col) {
+            auto pi = row_start + col;
+            if (table.dist[best_c1][pi] < table.dist[best_c0][pi]) {
+                result.pixel_indices[pi] = 1;
+                result.error += table.dist[best_c1][pi];
+            } else {
+                result.pixel_indices[pi] = 0;
+                result.error += table.dist[best_c0][pi];
+            }
+        }
+    }
+
+    return result;
+}
+
+// ---------------------------------------------------------------------------
 // Parallel cell processing
 // ---------------------------------------------------------------------------
 
@@ -429,6 +594,113 @@ ScreenResult quantize_multicolor_frequency_bg(
     return result;
 }
 
+// ---------------------------------------------------------------------------
+// FLI multicolor quantization (brute force bg, per-row screen colors)
+// ---------------------------------------------------------------------------
+
+ScreenResult quantize_fli_with_bg(
+    vic2::Mode mode, std::uint8_t bg,
+    const Image& image, const Palette& palette,
+    const std::vector<color_space::OKLab>& palette_lab,
+    const vic2::ModeParams& params,
+    const ThresholdFn& tfn, float tstr) {
+
+    auto cx = vic2::cells_x(params);
+    auto cy = vic2::cells_y(params);
+    auto total_cells = cx * cy;
+
+    std::vector<CellDistTable> tables(total_cells);
+    parallel_for_cells(cx, cy, [&](std::size_t idx, std::size_t x, std::size_t y) {
+        tables[idx] = precompute_cell_dist(image, x, y, palette_lab, params,
+                                            tfn, tstr);
+    });
+
+    ScreenResult result;
+    result.mode = mode;
+    result.background_color = bg;
+    result.cells.resize(total_cells);
+
+    std::atomic<float> total_error{0.0f};
+
+    parallel_for_cells(cx, cy, [&](std::size_t idx, std::size_t x, std::size_t) {
+        CellResult cell;
+        if (x < vic2::fli_bug_columns) {
+            // FLI bug: shows $D021 (background) color
+            auto pixels = params.cell_width * params.cell_height;
+            cell.cell_colors.resize(18, bg);
+            cell.pixel_indices.resize(pixels, 0);
+            cell.error = 0.0f;
+            for (std::size_t p = 0; p < pixels; ++p)
+                cell.error += tables[idx].dist[bg][p];
+        } else {
+            cell = quantize_cell_fli(tables[idx], bg, palette);
+        }
+
+        float current = total_error.load(std::memory_order_relaxed);
+        while (!total_error.compare_exchange_weak(
+            current, current + cell.error, std::memory_order_relaxed)) {}
+
+        result.cells[idx] = std::move(cell);
+    });
+
+    result.total_error = total_error.load();
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// AFLI hires quantization (per-row 2 colors, no shared background)
+// ---------------------------------------------------------------------------
+
+// AFLI with a specific background color for bug columns + $D021
+ScreenResult quantize_afli_with_bg(
+    vic2::Mode mode, std::uint8_t bg,
+    const Image& image, const Palette& palette,
+    const std::vector<color_space::OKLab>& palette_lab,
+    const vic2::ModeParams& params,
+    const ThresholdFn& tfn, float tstr) {
+
+    auto cx = vic2::cells_x(params);
+    auto cy = vic2::cells_y(params);
+    auto total_cells = cx * cy;
+
+    std::vector<CellDistTable> tables(total_cells);
+    parallel_for_cells(cx, cy, [&](std::size_t idx, std::size_t x, std::size_t y) {
+        tables[idx] = precompute_cell_dist(image, x, y, palette_lab, params,
+                                            tfn, tstr);
+    });
+
+    ScreenResult result;
+    result.mode = mode;
+    result.background_color = bg;
+    result.cells.resize(total_cells);
+
+    std::atomic<float> total_error{0.0f};
+
+    parallel_for_cells(cx, cy, [&](std::size_t idx, std::size_t x, std::size_t) {
+        CellResult cell;
+        if (x < vic2::fli_bug_columns) {
+            // FLI bug: shows $D021 (background) color
+            constexpr std::size_t cell_w = 8, cell_h = 8;
+            cell.cell_colors.resize(16, bg);
+            cell.pixel_indices.resize(cell_w * cell_h, 0);
+            cell.error = 0.0f;
+            for (std::size_t p = 0; p < cell_w * cell_h; ++p)
+                cell.error += tables[idx].dist[bg][p];
+        } else {
+            cell = quantize_cell_afli(tables[idx], palette);
+        }
+
+        float current = total_error.load(std::memory_order_relaxed);
+        while (!total_error.compare_exchange_weak(
+            current, current + cell.error, std::memory_order_relaxed)) {}
+
+        result.cells[idx] = std::move(cell);
+    });
+
+    result.total_error = total_error.load();
+    return result;
+}
+
 } // namespace
 
 Result<ScreenResult> quantize(const Image& image, const Palette& palette,
@@ -463,6 +735,14 @@ Result<ScreenResult> quantize(const Image& image, const Palette& palette,
         return quantize_multicolor_frequency_bg(mode, image, palette,
                                                 palette_lab, params,
                                                 threshold, threshold_strength);
+
+    case vic2::Mode::fli:
+        return quantize_fli_with_bg(mode, 0, image, palette, palette_lab,
+                                    params, threshold, threshold_strength);
+
+    case vic2::Mode::afli:
+        return quantize_afli_with_bg(mode, 0, image, palette, palette_lab,
+                                     params, threshold, threshold_strength);
     }
 
     std::unreachable();

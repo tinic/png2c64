@@ -63,7 +63,7 @@ void print_usage() {
         "Usage: png2c64 [options] input.[png|jpg|bmp|tga] [output.png]\n"
         "\n"
         "Options:\n"
-        "  --mode hires|multicolor|sprite-hi|sprite-mc|charset-hi|charset-mc\n"
+        "  --mode hires|multicolor|fli|afli|sprite-hi|sprite-mc|charset-hi|charset-mc\n"
         "                                  VIC-II mode (default: multicolor)\n"
         "  --palette <name>                Color palette (default: pepto)\n"
         "     pepto, vice, colodore, deekay, godot, c64wiki, levy\n"
@@ -120,6 +120,8 @@ Result<Config> parse_args(int argc, char* argv[]) {
             if (arg == "--mode") {
                 if (val == "hires") config.mode = vic2::Mode::hires;
                 else if (val == "multicolor") config.mode = vic2::Mode::multicolor;
+                else if (val == "fli") config.mode = vic2::Mode::fli;
+                else if (val == "afli") config.mode = vic2::Mode::afli;
                 else if (val == "sprite-hi") config.mode = vic2::Mode::sprite_hires;
                 else if (val == "sprite-mc") config.mode = vic2::Mode::sprite_multicolor;
                 else if (val == "charset-hi" || val == "charset-mc") {
@@ -284,10 +286,27 @@ Image render_screen(const quantize::ScreenResult& screen,
         auto px = cell_x * params.cell_width * pixel_stretch;
         auto py = cell_y * params.cell_height;
 
+        bool fli = vic2::is_fli_mode(screen.mode);
         std::size_t pi = 0;
         for (std::size_t dy = 0; dy < params.cell_height; ++dy) {
             for (std::size_t dx = 0; dx < params.cell_width; ++dx) {
-                auto color_idx = cell.cell_colors[cell.pixel_indices[pi]];
+                std::uint8_t color_idx;
+                if (fli && screen.mode == vic2::Mode::fli) {
+                    // FLI: [bg, colorram, r0_hi, r0_lo, ...]
+                    std::array<std::uint8_t, 4> rc = {
+                        cell.cell_colors[0], cell.cell_colors[2 + dy * 2],
+                        cell.cell_colors[3 + dy * 2], cell.cell_colors[1]};
+                    color_idx = rc[cell.pixel_indices[pi]];
+                } else if (fli && screen.mode == vic2::Mode::afli) {
+                    // AFLI FLI bug: on forced bad lines (rows 1-7),
+                    // VIC-II reads $FF from floating bus → color 15
+                    if (cell_x < vic2::fli_bug_columns && dy > 0)
+                        color_idx = 15;
+                    else
+                        color_idx = cell.cell_colors[dy * 2 + cell.pixel_indices[pi]];
+                } else {
+                    color_idx = cell.cell_colors[cell.pixel_indices[pi]];
+                }
                 auto color = pal.colors[color_idx];
                 auto out_x = px + dx * pixel_stretch;
                 for (std::size_t s = 0; s < pixel_stretch; ++s) {
@@ -305,7 +324,6 @@ Image render_screen(const quantize::ScreenResult& screen,
 // Full pipeline from preprocessed image -> displayed output
 // ---------------------------------------------------------------------------
 
-// Run preprocess -> palette match -> quantize -> dither -> render -> display
 void run_pipeline_and_display(const Image& scaled_image,
                               const preprocess::Settings& pp,
                               const Palette& pal,
@@ -1063,6 +1081,8 @@ int main(int argc, char* argv[]) {
         case vic2::Mode::multicolor:         return "multicolor";
         case vic2::Mode::sprite_hires:       return "sprite-hires";
         case vic2::Mode::sprite_multicolor:  return "sprite-multicolor";
+        case vic2::Mode::fli:                return "fli";
+        case vic2::Mode::afli:               return "afli";
         }
         std::unreachable();
     }();
@@ -1073,7 +1093,7 @@ int main(int argc, char* argv[]) {
                      params.screen_width, params.screen_height);
     }
 
-    std::println("Quantizing ({}, brute force)...", mode_name);
+    std::println("Quantizing ({})...", mode_name);
     auto tfn = make_threshold_fn(config->dither_settings);
     auto screen = quantize::quantize(*image, pal, config->mode, params,
                                      tfn, config->dither_settings.strength);

@@ -23,7 +23,7 @@ struct Options {
     float black_point = 0.0f;
     float white_point = 0.0f;
     bool serpentine = true;
-    int width = 0;   // 0 = auto (mode default)
+    int width = 0;
     int height = 0;
 };
 

@@ -10,6 +10,8 @@ enum class Mode : unsigned char {
     multicolor,
     sprite_hires,
     sprite_multicolor,
+    fli,                // FLI multicolor: per-row colors within 4x8 cells
+    afli,               // AFLI hires FLI: per-row colors within 8x8 cells
 };
 
 struct ModeParams {
@@ -28,15 +30,17 @@ constexpr ModeParams get_mode_params(Mode mode) noexcept {
     case Mode::multicolor:
         return {160, 200, 4, 8, 4, true};
     case Mode::sprite_hires:
-        // Single sprite; screen dims set at runtime via get_sprite_params
         return {24, 21, 24, 21, 2, false};
     case Mode::sprite_multicolor:
         return {12, 21, 12, 21, 4, true};
+    case Mode::fli:
+        return {160, 200, 4, 8, 4, true};  // same grid as multicolor
+    case Mode::afli:
+        return {320, 200, 8, 8, 2, false};  // same grid as hires
     }
     std::unreachable();
 }
 
-// Construct params for a sprite sheet grid
 constexpr ModeParams get_sprite_params(Mode mode, std::size_t sprites_x,
                                        std::size_t sprites_y) noexcept {
     auto p = get_mode_params(mode);
@@ -50,10 +54,17 @@ constexpr bool is_sprite_mode(Mode mode) noexcept {
 }
 
 constexpr bool is_double_wide(Mode mode) noexcept {
-    return mode == Mode::multicolor || mode == Mode::sprite_multicolor;
+    return mode == Mode::multicolor || mode == Mode::sprite_multicolor
+        || mode == Mode::fli;
 }
 
-// Compute cells from params (works for any mode)
+constexpr bool is_fli_mode(Mode mode) noexcept {
+    return mode == Mode::fli || mode == Mode::afli;
+}
+
+// FLI bug: left 3 character columns show garbage
+constexpr std::size_t fli_bug_columns = 3;
+
 constexpr std::size_t cells_x(const ModeParams& p) noexcept {
     return p.screen_width / p.cell_width;
 }

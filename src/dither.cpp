@@ -252,6 +252,30 @@ PixelCell get_pixel_cell(quantize::ScreenResult& result,
 }
 
 // ===========================================================================
+// FLI per-row color extraction
+// ===========================================================================
+
+// Get the available colors for a specific row within a FLI/AFLI cell.
+// Returns a small vector of palette indices.
+std::vector<std::uint8_t> get_row_colors(
+    const quantize::CellResult& cell, vic2::Mode mode, std::size_t local_y) {
+    if (mode == vic2::Mode::fli) {
+        // cell_colors = [bg, colorram, r0_hi, r0_lo, ..., r7_hi, r7_lo]
+        return {cell.cell_colors[0],
+                cell.cell_colors[2 + local_y * 2],
+                cell.cell_colors[3 + local_y * 2],
+                cell.cell_colors[1]};
+    }
+    if (mode == vic2::Mode::afli) {
+        // cell_colors = [r0_c0, r0_c1, ..., r7_c0, r7_c1]
+        return {cell.cell_colors[local_y * 2],
+                cell.cell_colors[local_y * 2 + 1]};
+    }
+    // Standard modes: uniform colors
+    return {cell.cell_colors.begin(), cell.cell_colors.end()};
+}
+
+// ===========================================================================
 // Generic ordered dithering with arbitrary matrix dimensions
 // ===========================================================================
 
@@ -270,8 +294,13 @@ void apply_ordered_matrix(const Image& image, quantize::ScreenResult& result,
         auto px = cell_x * params.cell_width;
         auto py = cell_y * params.cell_height;
 
+        bool fli = vic2::is_fli_mode(result.mode);
         std::size_t pi = 0;
         for (std::size_t dy = 0; dy < params.cell_height; ++dy) {
+            auto row_colors = fli
+                ? get_row_colors(cell, result.mode, dy)
+                : std::vector<std::uint8_t>(cell.cell_colors.begin(),
+                                             cell.cell_colors.end());
             for (std::size_t dx = 0; dx < params.cell_width; ++dx) {
                 auto pixel_lab =
                     color_space::linear_to_oklab(image[px + dx, py + dy]);
@@ -283,7 +312,7 @@ void apply_ordered_matrix(const Image& image, quantize::ScreenResult& result,
                 pixel_lab.b += threshold * strength * 0.03f;
 
                 auto [idx, chosen] = find_nearest_oklab(
-                    pixel_lab, cell.cell_colors, palette_lab);
+                    pixel_lab, row_colors, palette_lab);
                 cell.pixel_indices[pi] = idx;
                 ++pi;
             }
@@ -378,8 +407,15 @@ void apply_error_diffusion(
 
             auto adjusted = oklab_add(image_lab[buf_idx], clamped_error);
 
+            // FLI: use row-specific colors
+            auto local_y = (y % params.cell_height);
+            auto colors = vic2::is_fli_mode(result.mode)
+                ? get_row_colors(*cell, result.mode, local_y)
+                : std::vector<std::uint8_t>(cell->cell_colors.begin(),
+                                             cell->cell_colors.end());
+
             auto [idx, chosen_lab] = find_nearest_oklab(
-                adjusted, cell->cell_colors, palette_lab);
+                adjusted, colors, palette_lab);
             cell->pixel_indices[pi] = idx;
 
             auto quant_error =
