@@ -3,6 +3,7 @@ export const MODES = [
   { value: 'hires', label: 'Hi-Res (320x200)' },
   { value: 'fli', label: 'FLI Multicolor (160x200)' },
   { value: 'afli', label: 'AFLI Hi-Res (320x200)' },
+  { value: 'petscii', label: 'PETSCII (40x25 text)' },
   { value: 'charset-mc', label: 'Charset Multicolor' },
   { value: 'charset-hi', label: 'Charset Hi-Res' },
   { value: 'sprite-mc', label: 'Sprite Multicolor' },
@@ -88,6 +89,7 @@ export const EXAMPLES = [
   { name: 'fantasy', file: 'fantasy.png' },
   { name: 'game', file: 'game.png' },
   { name: 'golden3', file: 'golden3.jpeg' },
+  { name: 'head', file: 'head.png' },
   { name: 'monster', file: 'monster.jpeg' },
   { name: 'ship', file: 'ship.jpeg' },
 ]
@@ -113,7 +115,7 @@ export function isSpriteMode(mode) {
 }
 
 export function hasPrgExport(mode) {
-  return mode === 'multicolor' || mode === 'hires' || mode === 'fli' || mode === 'afli'
+  return mode === 'multicolor' || mode === 'hires' || mode === 'fli' || mode === 'afli' || mode === 'petscii'
 }
 
 export function isCharsetMode(mode) {

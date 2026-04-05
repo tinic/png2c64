@@ -99,4 +99,16 @@ add_example(alien   png  GAMMA 0.8 DITHER_STRENGTH 0.8)
 add_example(face    png  GAMMA 3.0 DITHER_STRENGTH 1.0)
 add_example(game    png  GAMMA 2.0 DITHER_STRENGTH 1.5)
 
+add_test(
+    NAME "convert-head-petscii"
+    COMMAND png2c64
+        --mode petscii
+        --gamma 3.3
+        --dither-strength 1.6
+        --black-point 0.09
+        --white-point 0.06
+        "${EXAMPLES_DIR}/head.png"
+        "${EXAMPLES_DIR}/head-petscii.png"
+)
+
 endif() # NOT EMSCRIPTEN

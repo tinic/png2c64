@@ -1,5 +1,6 @@
 #include "quantize.hpp"
 #include "color_space.hpp"
+#include "petscii_rom.hpp"
 
 #include <algorithm>
 #include <array>
@@ -701,6 +702,118 @@ ScreenResult quantize_afli_with_bg(
     return result;
 }
 
+// ---------------------------------------------------------------------------
+// PETSCII: brute force bg, 256 ROM chars × 15 fg colors per cell
+// ---------------------------------------------------------------------------
+
+CellResult quantize_cell_petscii(
+    const CellDistTable& table, std::uint8_t bg_color,
+    const Palette& palette) {
+
+    auto n = static_cast<std::uint8_t>(palette.size());
+
+    // Precompute bg_sum (sum of bg distance for all 64 pixels)
+    float bg_sum = 0.0f;
+    for (std::size_t p = 0; p < 64; ++p)
+        bg_sum += table.dist[bg_color][p];
+
+    // Precompute delta[fg][p] = dist[fg][p] - dist[bg][p]
+    std::array<std::array<float, 64>, max_palette> delta{};
+    for (std::uint8_t fg = 0; fg < n; ++fg) {
+        if (fg == bg_color) continue;
+        for (std::size_t p = 0; p < 64; ++p)
+            delta[fg][p] = table.dist[fg][p] - table.dist[bg_color][p];
+    }
+
+    float best_error = std::numeric_limits<float>::max();
+    std::uint8_t best_char = 0;
+    std::uint8_t best_fg = 0;
+
+    for (std::uint8_t fg = 0; fg < n; ++fg) {
+        if (fg == bg_color) continue;
+
+        for (std::size_t ch = 0; ch < 256; ++ch) {
+            const auto& bits = petscii::char_bits[ch];
+
+            float err = bg_sum;
+            for (std::uint8_t i = 0; i < bits.count; ++i)
+                err += delta[fg][bits.positions[i]];
+
+            if (err < best_error) {
+                best_error = err;
+                best_char = static_cast<std::uint8_t>(ch);
+                best_fg = fg;
+            }
+        }
+    }
+
+    // Build pixel_indices from the winning character bitmap
+    CellResult result;
+    result.pixel_indices.resize(64);
+    for (std::size_t row = 0; row < 8; ++row) {
+        auto byte = petscii::character_rom[best_char * 8 + row];
+        for (std::size_t col = 0; col < 8; ++col)
+            result.pixel_indices[row * 8 + col] =
+                (byte & (0x80 >> col)) ? 1 : 0;
+    }
+
+    result.cell_colors = {bg_color, best_fg};
+    result.char_index = best_char;
+    result.error = best_error;
+    return result;
+}
+
+ScreenResult quantize_petscii(
+    vic2::Mode mode, const Image& image, const Palette& palette,
+    const std::vector<color_space::OKLab>& palette_lab,
+    const vic2::ModeParams& params,
+    const ThresholdFn& tfn, float tstr) {
+
+    auto cx = vic2::cells_x(params);
+    auto cy = vic2::cells_y(params);
+    auto total_cells = cx * cy;
+    auto n = static_cast<std::uint8_t>(palette.size());
+
+    // Precompute all cell distance tables in parallel
+    std::vector<CellDistTable> tables(total_cells);
+    parallel_for_cells(cx, cy, [&](std::size_t idx, std::size_t x, std::size_t y) {
+        tables[idx] = precompute_cell_dist(image, x, y, palette_lab, params,
+                                            tfn, tstr);
+    });
+
+    // Brute force all 16 background colors
+    float best_total = std::numeric_limits<float>::max();
+    ScreenResult best;
+
+    for (std::uint8_t bg = 0; bg < n; ++bg) {
+        ScreenResult candidate;
+        candidate.mode = mode;
+        candidate.background_color = bg;
+        candidate.cells.resize(total_cells);
+
+        std::atomic<float> total_error{0.0f};
+
+        parallel_for_cells(cx, cy, [&](std::size_t idx, std::size_t, std::size_t) {
+            auto cell = quantize_cell_petscii(tables[idx], bg, palette);
+
+            float current = total_error.load(std::memory_order_relaxed);
+            while (!total_error.compare_exchange_weak(
+                current, current + cell.error, std::memory_order_relaxed)) {}
+
+            candidate.cells[idx] = std::move(cell);
+        });
+
+        candidate.total_error = total_error.load();
+
+        if (candidate.total_error < best_total) {
+            best_total = candidate.total_error;
+            best = std::move(candidate);
+        }
+    }
+
+    return best;
+}
+
 } // namespace
 
 Result<ScreenResult> quantize(const Image& image, const Palette& palette,
@@ -743,6 +856,10 @@ Result<ScreenResult> quantize(const Image& image, const Palette& palette,
     case vic2::Mode::afli:
         return quantize_afli_with_bg(mode, 0, image, palette, palette_lab,
                                      params, threshold, threshold_strength);
+
+    case vic2::Mode::petscii:
+        return quantize_petscii(mode, image, palette, palette_lab,
+                                params, threshold, threshold_strength);
     }
 
     std::unreachable();

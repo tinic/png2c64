@@ -64,7 +64,7 @@ void print_usage() {
         "Usage: png2c64 [options] input.[png|jpg|bmp|tga] [output.png]\n"
         "\n"
         "Options:\n"
-        "  --mode hires|multicolor|fli|afli|sprite-hi|sprite-mc|charset-hi|charset-mc\n"
+        "  --mode hires|multicolor|fli|afli|petscii|sprite-hi|sprite-mc|charset-hi|charset-mc\n"
         "                                  VIC-II mode (default: multicolor)\n"
         "  --palette <name>                Color palette (default: colodore)\n"
         "     pepto, vice, colodore, deekay, godot, c64wiki, levy\n"
@@ -132,6 +132,7 @@ Result<Config> parse_args(int argc, char* argv[]) {
                 else if (val == "multicolor") config.mode = vic2::Mode::multicolor;
                 else if (val == "fli") config.mode = vic2::Mode::fli;
                 else if (val == "afli") config.mode = vic2::Mode::afli;
+                else if (val == "petscii") config.mode = vic2::Mode::petscii;
                 else if (val == "sprite-hi") config.mode = vic2::Mode::sprite_hires;
                 else if (val == "sprite-mc") config.mode = vic2::Mode::sprite_multicolor;
                 else if (val == "charset-hi" || val == "charset-mc") {
@@ -1095,6 +1096,7 @@ int main(int argc, char* argv[]) {
         case vic2::Mode::sprite_multicolor:  return "sprite-multicolor";
         case vic2::Mode::fli:                return "fli";
         case vic2::Mode::afli:               return "afli";
+        case vic2::Mode::petscii:            return "petscii";
         }
         std::unreachable();
     }();

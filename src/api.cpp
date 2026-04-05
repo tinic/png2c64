@@ -29,6 +29,7 @@ vic2::Mode parse_mode(const std::string& s) {
     if (s == "sprite-mc") return vic2::Mode::sprite_multicolor;
     if (s == "fli") return vic2::Mode::fli;
     if (s == "afli") return vic2::Mode::afli;
+    if (s == "petscii") return vic2::Mode::petscii;
     return vic2::Mode::multicolor;
 }
 

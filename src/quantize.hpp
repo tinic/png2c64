@@ -19,6 +19,7 @@ struct CellResult {
     std::vector<std::uint8_t> pixel_indices;  // per-pixel index into cell_colors
     std::vector<std::uint8_t> cell_colors;    // palette indices used by this cell
     float error{};
+    std::uint8_t char_index{};                // PETSCII: character ROM index
 };
 
 struct ScreenResult {

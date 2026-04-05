@@ -21,7 +21,7 @@ Built for C64 demo scene production. All color operations use [OKLab](https://bo
 | Interactive tuning | CLI + web with live preview | Batch only |
 | Palette range matching | Automatic OKLab extent mapping | Manual |
 | CRT simulation | PAL bandwidth, scanlines, phosphor bloom | None |
-| Export formats | PNG, PRG (with displayer), Koala, Art Studio, C headers | 1-2 formats |
+| Export formats | PNG, PRG (with displayer), Koala, Art Studio, C headers, PETSCII text | 1-2 formats |
 | Runs in browser | Yes (WASM) | No |
 
 ## Examples
@@ -31,6 +31,13 @@ Built for C64 demo scene production. All color operations use [OKLab](https://bo
 | ![alien](examples/alien-c64.png) | ![dog](examples/dog-c64.png) | ![dragon](examples/dragon-c64.png) |
 | ![face](examples/face-c64.png) | ![fantasy](examples/fantasy-c64.png) | ![golden3](examples/golden3-c64.png) |
 | ![monster](examples/monster-c64.png) | ![ship](examples/ship-c64.png) | ![game](examples/game-c64.png) |
+
+### PETSCII
+
+| | |
+|---|---|
+| ![head input](examples/head.png) | ![head petscii](examples/head-petscii.png) |
+| Input | PETSCII (40x25 text mode) |
 
 ## Dither Modes
 
@@ -107,6 +114,8 @@ All 17 modes shown with `--gamma 1 --dither-strength 2 --error-clamp 0.2`. Click
 ## Features
 
 - **Bitmap modes** -- hires (320x200, 2 colors/cell) and multicolor (160x200, 4 colors/cell)
+- **FLI modes** -- FLI multicolor and AFLI hires with per-row color attributes, PRG export with displayer
+- **PETSCII mode** -- image approximation using the C64's built-in 256-character ROM, brute-force best character + color per cell
 - **Sprite sheets** -- hires and multicolor, arbitrary grid dimensions
 - **Character sets** -- 256-char charset generation with dedup, pattern merging, k-means refinement, and C header export
 - **7 VIC-II palettes** -- Pepto, VICE, Colodore, Deekay, Godot, C64 Wiki, Levy
@@ -154,6 +163,18 @@ png2c64 --mode sprite-mc --sprites-x 6 --sprites-y 2 input.png output.png
 
 # Single hires sprite
 png2c64 --mode sprite-hi input.png output.png
+```
+
+### FLI / AFLI
+```bash
+png2c64 --mode fli input.jpg output.png    # multicolor FLI, per-row colors
+png2c64 --mode afli input.jpg output.png   # hires FLI, per-row colors
+```
+
+### PETSCII
+```bash
+# Uses C64 ROM charset to approximate the image in text mode
+png2c64 --mode petscii --gamma 3.3 --dither-strength 1.6 input.jpg output.png
 ```
 
 ### Character set
@@ -209,10 +230,11 @@ Gallery and interactive work with all modes including charset.
 ## Options
 
 ```
---mode <mode>              hires, multicolor, sprite-hi, sprite-mc,
-                           charset-hi, charset-mc  (default: multicolor)
+--mode <mode>              hires, multicolor, fli, afli, petscii,
+                           sprite-hi, sprite-mc, charset-hi, charset-mc
+                           (default: multicolor)
 --palette <name>           pepto, vice, colodore, deekay, godot,
-                           c64wiki, levy  (default: pepto)
+                           c64wiki, levy  (default: colodore)
 --dither <method>          Dithering method (default: checker)
   Square-pixel:            none, bayer4, bayer8, fs, atkinson, sierra
   2:1 multicolor:          checker, bayer2x2, h2x4, clustered, fs-wide, jarvis
@@ -223,7 +245,8 @@ Gallery and interactive work with all modes including charset.
 --brightness <float>       -1.0 to 1.0 (default: 0.0)
 --contrast <float>         0.0 to 2.0 (default: 1.0)
 --saturation <float>       0.0 to 2.0 (default: 1.0)
---gamma <float>            0.1 to 8.0 (default: 1.0)
+--gamma <float>            0.1 to 8.0 (default: 1.5)
+--match-range              Enable palette range matching (default: off)
 --width <int>              Override target width
 --height <int>             Override target height
 --sprites-x <int>          Sprite sheet columns (default: 1)
@@ -254,6 +277,8 @@ Each cell is quantized by exhaustively testing all valid color combinations:
 |------|----------------------|-----------------|
 | Hires | C(16,2) = 120 pairs | ~15M evaluations |
 | Multicolor | 16 backgrounds x C(15,3) = 455 triples | ~931M evaluations |
+| FLI | 16 bg x 15 colorram x C(14,2) x 8 rows | ~44K/cell |
+| PETSCII | 16 bg x 256 chars x 15 fg | ~61M evaluations |
 | Charset MC | C(16,3) = 560 shared triples x 13 per-cell | ~300M evaluations |
 
 All distance computations use squared OKLab perceptual distance. Cell processing is parallelized across all CPU cores via `std::jthread`.
@@ -290,8 +315,11 @@ src/
   scale.hpp/.cpp     Bicubic scaling
   preprocess.hpp/.cpp  Color adjustments + OKLab range matching
   quantize.hpp/.cpp  Brute-force quantization (multithreaded)
-  dither.hpp/.cpp    12 dither algorithms (OKLab)
+  dither.hpp/.cpp    17 dither algorithms (OKLab)
   charset.hpp/.cpp   Charset conversion + C header export
+  petscii_rom.hpp    C64 character ROM (256 chars, precomputed bit tables)
+  prg.hpp/.cpp       PRG export with embedded displayers
+  displayer_data.hpp Koala/hires/FLI/AFLI/PETSCII displayer binaries
 third_party/
   stb_image.h, stb_image_write.h
 ```

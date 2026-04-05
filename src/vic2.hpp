@@ -12,6 +12,7 @@ enum class Mode : unsigned char {
     sprite_multicolor,
     fli,                // FLI multicolor: per-row colors within 4x8 cells
     afli,               // AFLI hires FLI: per-row colors within 8x8 cells
+    petscii,            // PETSCII text mode: fixed ROM charset, shared bg + per-cell fg
 };
 
 struct ModeParams {
@@ -37,6 +38,8 @@ constexpr ModeParams get_mode_params(Mode mode) noexcept {
         return {160, 200, 4, 8, 4, true};  // same grid as multicolor
     case Mode::afli:
         return {320, 200, 8, 8, 2, false};  // same grid as hires
+    case Mode::petscii:
+        return {320, 200, 8, 8, 2, true};   // shared bg, per-cell fg
     }
     std::unreachable();
 }

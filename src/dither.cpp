@@ -529,6 +529,9 @@ void apply(const Image& image, quantize::ScreenResult& result,
            const Palette& palette, const vic2::ModeParams& params,
            const Settings& settings) {
 
+    // PETSCII: pixel patterns are fixed by character ROM, skip dithering
+    if (result.mode == vic2::Mode::petscii) return;
+
     auto palette_lab = precompute_palette_lab(palette);
 
     switch (settings.method) {

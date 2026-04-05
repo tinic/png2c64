@@ -366,6 +366,34 @@ Result<PrgData> afli(const quantize::ScreenResult& screen) {
                               image_data, 0x4000);
 }
 
+Result<PrgData> petscii_text(const quantize::ScreenResult& screen) {
+    if (screen.cells.size() != 1000)
+        return std::unexpected{Error{ErrorCode::invalid_dimensions,
+            "PETSCII requires 40x25 = 1000 cells"}};
+
+    // Screen RAM: character indices
+    std::vector<std::uint8_t> scr(1000);
+    for (std::size_t i = 0; i < 1000; ++i)
+        scr[i] = screen.cells[i].char_index;
+
+    // Color RAM: fg color per cell (low nibble)
+    std::vector<std::uint8_t> color(1000);
+    for (std::size_t i = 0; i < 1000; ++i) {
+        auto& cc = screen.cells[i].cell_colors;
+        color[i] = (cc.size() > 1) ? (cc[1] & 0x0F) : 0;
+    }
+
+    // Data: screen(1000) + color(1000) + bg(1) at $2000
+    std::vector<std::uint8_t> image_data;
+    image_data.insert(image_data.end(), scr.begin(), scr.end());
+    image_data.insert(image_data.end(), color.begin(), color.end());
+    image_data.push_back(screen.background_color & 0x0F);
+
+    return build_display_prg(detail::petscii_displayer,
+                              sizeof(detail::petscii_displayer),
+                              image_data, 0x2000);
+}
+
 Result<PrgData> from_screen(const quantize::ScreenResult& screen) {
     switch (screen.mode) {
     case vic2::Mode::multicolor:
@@ -376,6 +404,8 @@ Result<PrgData> from_screen(const quantize::ScreenResult& screen) {
         return fli(screen);
     case vic2::Mode::afli:
         return afli(screen);
+    case vic2::Mode::petscii:
+        return petscii_text(screen);
     default:
         return std::unexpected{Error{
             ErrorCode::invalid_dimensions,
