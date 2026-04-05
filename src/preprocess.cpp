@@ -215,11 +215,25 @@ void match_palette_range(Image& image, const Palette& palette,
         return dst_lo + t * (dst_hi - dst_lo);
     };
 
+    // Scale chroma around zero: compresses a/b to fit the palette range
+    // without shifting the neutral axis (which causes color bias).
+    auto scale_around_zero = [](float val, float src_lo, float src_hi,
+                                float dst_lo, float dst_hi) -> float {
+        if (val >= 0.0f) {
+            float s = (src_hi > 1e-6f) ? dst_hi / src_hi : 1.0f;
+            return val * s;
+        }
+        float s = (src_lo < -1e-6f) ? dst_lo / src_lo : 1.0f;
+        return val * s;
+    };
+
     for (std::size_t i = 0; i < pixel_count; ++i) {
         auto& lab = image_lab[i];
         lab.L = remap(lab.L, src_L_min, src_L_max, tgt_L_min, tgt_L_max);
-        lab.a = remap(lab.a, src_a_min, src_a_max, tgt_a_min, tgt_a_max);
-        lab.b = remap(lab.b, src_b_min, src_b_max, tgt_b_min, tgt_b_max);
+        lab.a = scale_around_zero(lab.a, src_a_min, src_a_max,
+                                  tgt_a_min, tgt_a_max);
+        lab.b = scale_around_zero(lab.b, src_b_min, src_b_max,
+                                  tgt_b_min, tgt_b_max);
 
         auto y = i / image.width();
         auto x = i % image.width();

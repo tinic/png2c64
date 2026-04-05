@@ -313,7 +313,7 @@ function onFileSelect(event) {
 
           <!-- Mode / Palette / Dither -->
           <Panel header="Settings">
-            <div class="flex flex-column gap-3">
+            <div class="flex flex-column gap-2">
               <div class="grid align-items-center">
                 <label class="col-4 text-xs text-color-secondary font-semibold" title="VIC-II graphics mode. Multicolor: 160x200, 4 colors/cell. Hires: 320x200, 2 colors/cell.">Mode</label>
                 <div class="col-8">
@@ -362,7 +362,7 @@ function onFileSelect(event) {
 
           <!-- Adjustments -->
           <Panel header="Adjustments">
-            <div class="flex flex-column gap-3">
+            <div class="flex flex-column gap-2">
               <div class="grid align-items-center">
                 <label class="col-3 text-xs text-color-secondary font-semibold" title="Remap image color range to fit the C64 palette range in OKLab space. Disable for more accurate colors at the cost of potential clipping.">Match Range</label>
                 <div class="col-9">
