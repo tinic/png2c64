@@ -12,6 +12,7 @@ import Converter from './components/Converter.vue'
             <h1 class="m-0 title">png2c64</h1>
             <p class="m-0 mt-1 text-sm text-color-secondary">
               Convert images to Commodore 64 VIC-II formats with perceptual color matching
+              — <a href="https://github.com/tinic/png2c64" target="_blank" class="github-link">GitHub <i class="pi pi-github"></i></a>
             </p>
           </div>
         </div>
@@ -45,5 +46,15 @@ import Converter from './components/Converter.vue'
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
+}
+
+.github-link {
+  color: inherit;
+  text-decoration: none;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+.github-link:hover {
+  opacity: 1;
 }
 </style>
