@@ -82,16 +82,16 @@ export const DIFFUSION_SLIDERS = [
 ]
 
 export const EXAMPLES = [
-  { name: 'alien', file: 'alien.png' },
-  { name: 'dog', file: 'dog.png' },
-  { name: 'dragon', file: 'dragon.png' },
-  { name: 'face', file: 'face.png' },
-  { name: 'fantasy', file: 'fantasy.png' },
-  { name: 'game', file: 'game.png' },
-  { name: 'golden3', file: 'golden3.jpeg' },
-  { name: 'head', file: 'head.png' },
-  { name: 'monster', file: 'monster.jpeg' },
-  { name: 'ship', file: 'ship.jpeg' },
+  { name: 'alien', file: 'alien.png', opts: { gamma: 0.8, ditherStrength: 0.8 } },
+  { name: 'dog', file: 'dog.png', opts: { gamma: 3.0, ditherStrength: 1.5 } },
+  { name: 'dragon', file: 'dragon.png', opts: { gamma: 1.0, ditherStrength: 1.5, matchRange: true } },
+  { name: 'face', file: 'face.png', opts: { gamma: 3.0, ditherStrength: 1.0 } },
+  { name: 'fantasy', file: 'fantasy.png', opts: { gamma: 1.0, ditherStrength: 1.5, matchRange: true } },
+  { name: 'game', file: 'game.png', opts: { gamma: 2.0, ditherStrength: 1.5 } },
+  { name: 'golden3', file: 'golden3.jpeg', opts: { gamma: 2.0, ditherStrength: 1.5, matchRange: true } },
+  { name: 'head', file: 'head.png', opts: { mode: 'petscii', gamma: 3.3, ditherStrength: 1.6, blackPoint: 0.09, whitePoint: 0.06 } },
+  { name: 'monster', file: 'monster.jpeg', opts: { gamma: 3.0, ditherStrength: 1.5 } },
+  { name: 'ship', file: 'ship.jpeg', opts: { gamma: 2.0, ditherStrength: 1.5, matchRange: true } },
 ]
 
 export function defaultOptions() {

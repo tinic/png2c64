@@ -69,9 +69,9 @@ set(EXAMPLES_DIR ${CMAKE_SOURCE_DIR}/examples)
 
 enable_testing()
 
-# add_example(<stem> <ext> GAMMA <g> DITHER_STRENGTH <d>)
+# add_example(<stem> <ext> GAMMA <g> DITHER_STRENGTH <d> [MATCH_RANGE])
 function(add_example stem ext)
-    cmake_parse_arguments(EX "" "GAMMA;DITHER_STRENGTH" "" ${ARGN})
+    cmake_parse_arguments(EX "MATCH_RANGE" "GAMMA;DITHER_STRENGTH" "" ${ARGN})
     if(NOT DEFINED EX_GAMMA)
         set(EX_GAMMA 1.0)
     endif()
@@ -79,21 +79,27 @@ function(add_example stem ext)
         set(EX_DITHER_STRENGTH 1.0)
     endif()
 
+    set(EXTRA_ARGS "")
+    if(EX_MATCH_RANGE)
+        set(EXTRA_ARGS "--match-range")
+    endif()
+
     add_test(
         NAME "convert-${stem}"
         COMMAND png2c64
             --gamma ${EX_GAMMA}
             --dither-strength ${EX_DITHER_STRENGTH}
+            ${EXTRA_ARGS}
             "${EXAMPLES_DIR}/${stem}.${ext}"
             "${EXAMPLES_DIR}/${stem}-c64.png"
     )
 endfunction()
 
-add_example(golden3 jpeg GAMMA 2.0 DITHER_STRENGTH 1.5)
+add_example(golden3 jpeg GAMMA 2.0 DITHER_STRENGTH 1.5 MATCH_RANGE)
 add_example(monster jpeg GAMMA 3.0 DITHER_STRENGTH 1.5)
-add_example(ship    jpeg GAMMA 2.0 DITHER_STRENGTH 1.5)
-add_example(dragon  png  GAMMA 1.0 DITHER_STRENGTH 1.5)
-add_example(fantasy png  GAMMA 1.0 DITHER_STRENGTH 1.5)
+add_example(ship    jpeg GAMMA 2.0 DITHER_STRENGTH 1.5 MATCH_RANGE)
+add_example(dragon  png  GAMMA 1.0 DITHER_STRENGTH 1.5 MATCH_RANGE)
+add_example(fantasy png  GAMMA 1.0 DITHER_STRENGTH 1.5 MATCH_RANGE)
 add_example(dog     png  GAMMA 3.0 DITHER_STRENGTH 1.5)
 add_example(alien   png  GAMMA 0.8 DITHER_STRENGTH 0.8)
 add_example(face    png  GAMMA 3.0 DITHER_STRENGTH 1.0)

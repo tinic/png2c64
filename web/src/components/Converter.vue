@@ -219,6 +219,9 @@ function dismissHint() {
 
 async function loadExample(example) {
   dismissHint()
+  // Reset to defaults, then apply example-specific settings
+  Object.assign(options, defaultOptions())
+  if (example.opts) Object.assign(options, example.opts)
   const resp = await fetch(`/examples/${example.file}`)
   const buf = await resp.arrayBuffer()
   imageBytes.value = new Uint8Array(buf)
@@ -416,6 +419,8 @@ function onFileSelect(event) {
                 title="Download C header with charset data, screen map, and color RAM arrays for inclusion in C64 demo source code." />
               <Button v-if="isSpriteMode(options.mode)" label="h" icon="pi pi-download" class="flex-1" severity="secondary" :disabled="!imageBytes || converting" @click="downloadHeader"
                 title="Download C header with sprite data (64 bytes each), per-sprite colors, and shared color definitions." />
+              <Button v-if="options.mode === 'petscii'" label="h" icon="pi pi-download" class="flex-1" severity="secondary" :disabled="!imageBytes || converting" @click="downloadHeader"
+                title="Download C header with PETSCII screen codes, color RAM, and background color." />
             </div>
             <Button label="Reset" icon="pi pi-refresh" severity="secondary" outlined class="w-full" @click="resetOptions"
               title="Reset all parameters to defaults." />
