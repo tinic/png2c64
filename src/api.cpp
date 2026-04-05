@@ -105,7 +105,8 @@ Result<Image> load_and_preprocess(const std::uint8_t* input_data,
 
     auto pal = palette::by_name(options.palette);
     if (pal.colors.empty()) pal = palette::by_name("pepto");
-    preprocess::match_palette_range(image, pal);
+    if (options.match_range)
+        preprocess::match_palette_range(image, pal);
 
     return image;
 }

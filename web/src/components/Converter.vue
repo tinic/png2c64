@@ -361,6 +361,13 @@ function onFileSelect(event) {
           <!-- Adjustments -->
           <Panel header="Adjustments">
             <div class="flex flex-column gap-3">
+              <div class="grid align-items-center">
+                <label class="col-3 text-xs text-color-secondary font-semibold" title="Remap image color range to fit the C64 palette range in OKLab space. Disable for more accurate colors at the cost of potential clipping.">Match Range</label>
+                <div class="col-9">
+                  <ToggleSwitch v-model="options.matchRange" />
+                </div>
+              </div>
+
               <div v-for="s in SLIDERS" :key="s.key" class="grid align-items-center">
                 <label class="col-3 text-xs text-color-secondary font-semibold white-space-nowrap" :title="s.tip">{{ s.label }}</label>
                 <div class="col-6">

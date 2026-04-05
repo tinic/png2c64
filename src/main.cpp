@@ -56,6 +56,7 @@ struct Config {
     bool charset = false;
     bool charset_mc = false;
     bool interactive = false;
+    bool match_range = false;
 };
 
 void print_usage() {
@@ -75,10 +76,11 @@ void print_usage() {
         "  --error-clamp <float>           Max error per channel 0.1-2.0 (default: 0.8)\n"
         "  --adaptive <float>              Contrast-adaptive diffusion 0.0-1.0 (default: 0.0)\n"
         "  --no-serpentine                  Disable serpentine scanning\n"
+        "  --match-range                    Enable palette range matching (default: off)\n"
         "  --brightness <float>            Brightness -1.0 to 1.0 (default: 0.0)\n"
         "  --contrast <float>              Contrast 0.0-2.0 (default: 1.0)\n"
         "  --saturation <float>            Saturation 0.0-2.0 (default: 1.0)\n"
-        "  --gamma <float>                 Gamma 0.1-8.0 (default: 1.0)\n"
+        "  --gamma <float>                 Gamma 0.1-8.0 (default: 1.5)\n"
         "  --hue-shift <float>             Hue rotation -180 to 180 degrees (default: 0)\n"
         "  --sharpen <float>               Unsharp mask 0.0-2.0 (default: 0.0)\n"
         "  --black-point <float>           Black point clip 0.0-0.4 (default: 0.0)\n"
@@ -107,6 +109,14 @@ Result<Config> parse_args(int argc, char* argv[]) {
 
         if (arg == "--no-serpentine") {
             config.dither_settings.serpentine = false;
+            continue;
+        }
+        if (arg == "--match-range") {
+            config.match_range = true;
+            continue;
+        }
+        if (arg == "--no-match-range") {
+            config.match_range = false;
             continue;
         }
         if (arg == "--interactive") {
@@ -329,10 +339,11 @@ void run_pipeline_and_display(const Image& scaled_image,
                               const Palette& pal,
                               vic2::Mode mode,
                               const vic2::ModeParams& params,
-                              const dither::Settings& ds) {
+                              const dither::Settings& ds,
+                              bool match_range = true) {
     auto img = scaled_image; // copy
     preprocess::apply(img, pp);
-    preprocess::match_palette_range(img, pal);
+    if (match_range) preprocess::match_palette_range(img, pal);
 
     auto tfn = make_threshold_fn(ds);
     auto screen = quantize::quantize(img, pal, mode, params, tfn, ds.strength);
@@ -351,10 +362,11 @@ void run_charset_pipeline_and_display(const Image& scaled_image,
                                        const preprocess::Settings& pp,
                                        const Palette& pal,
                                        bool multicolor,
-                                       const dither::Settings& ds) {
+                                       const dither::Settings& ds,
+                                       bool match_range = true) {
     auto img = scaled_image;
     preprocess::apply(img, pp);
-    preprocess::match_palette_range(img, pal);
+    if (match_range) preprocess::match_palette_range(img, pal);
 
     auto result = charset::convert(img, pal, multicolor, ds);
     if (!result) return;
@@ -543,10 +555,10 @@ void run_float_gallery(std::string_view title,
         std::println("--- {} ---", label);
         if (config.charset) {
             run_charset_pipeline_and_display(scaled_image, pp, pal,
-                                             config.charset_mc, ds);
+                                             config.charset_mc, ds, config.match_range);
         } else {
             run_pipeline_and_display(scaled_image, pp, pal, config.mode,
-                                     params, ds);
+                                     params, ds, config.match_range);
         }
     }
 
@@ -725,7 +737,7 @@ void run_interactive(const Image& scaled_image, Config& config,
         // Run pipeline
         auto img = scaled_image;
         preprocess::apply(img, pp);
-        preprocess::match_palette_range(img, pal);
+        if (config.match_range) preprocess::match_palette_range(img, pal);
 
         Image output;
         if (is_charset) {
@@ -865,7 +877,7 @@ void run_interactive(const Image& scaled_image, Config& config,
                 auto pal = palette::by_name(config.palette_name);
                 auto img = scaled_image;
                 preprocess::apply(img, pp);
-                preprocess::match_palette_range(img, pal);
+                if (config.match_range) preprocess::match_palette_range(img, pal);
                 if (is_charset) {
                     auto result = charset::convert(img, pal, is_charset_mc, ds);
                     if (result) {
@@ -966,7 +978,7 @@ int main(int argc, char* argv[]) {
 
         // Preprocess
         preprocess::apply(*image, config->preprocess);
-        preprocess::match_palette_range(*image, pal);
+        if (config->match_range) preprocess::match_palette_range(*image, pal);
 
         // Gallery mode
         if (!config->gallery.empty()) {
@@ -1072,7 +1084,7 @@ int main(int argc, char* argv[]) {
     // Preprocess
     std::println("Preprocessing...");
     preprocess::apply(*image, config->preprocess);
-    preprocess::match_palette_range(*image, pal);
+    if (config->match_range) preprocess::match_palette_range(*image, pal);
 
     // Quantize
     auto mode_name = [&] {

@@ -52,7 +52,7 @@ export const DITHER_METHODS = [
 ]
 
 export const SLIDERS = [
-  { key: 'gamma',          label: 'Gamma',       min: 0.1, max: 5.0, step: 0.05, default: 1.0,
+  { key: 'gamma',          label: 'Gamma',       min: 0.1, max: 5.0, step: 0.05, default: 1.5,
     tip: 'Power curve applied before color matching. >1 darkens midtones, <1 brightens them.' },
   { key: 'ditherStrength', label: 'Strength',    min: 0,   max: 3.0, step: 0.05, default: 1.0,
     tip: 'Dithering intensity. 0 = no dithering effect, 1 = standard, >1 = exaggerated.' },
@@ -98,6 +98,7 @@ export function defaultOptions() {
     palette: 'pepto',
     dither: 'checker',
     serpentine: true,
+    matchRange: false,
     width: 0,
     height: 0,
     spritesX: 1,

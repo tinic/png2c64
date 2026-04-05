@@ -11,7 +11,7 @@ struct Options {
     std::string mode = "multicolor";
     std::string palette = "pepto";
     std::string dither = "checker";
-    float gamma = 1.0f;
+    float gamma = 1.5f;
     float brightness = 0.0f;
     float contrast = 1.0f;
     float saturation = 1.0f;
@@ -23,6 +23,7 @@ struct Options {
     float black_point = 0.0f;
     float white_point = 0.0f;
     bool serpentine = true;
+    bool match_range = false;
     int width = 0;
     int height = 0;
 };
