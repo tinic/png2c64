@@ -57,6 +57,18 @@ export const SLIDERS = [
   { key: 'adaptive',       label: 'Adaptive',    min: 0,   max: 1.0, step: 0.05, default: 0.0  },
 ]
 
+export const EXAMPLES = [
+  { name: 'alien', file: 'alien.png' },
+  { name: 'dog', file: 'dog.png' },
+  { name: 'dragon', file: 'dragon.png' },
+  { name: 'face', file: 'face.png' },
+  { name: 'fantasy', file: 'fantasy.png' },
+  { name: 'game', file: 'game.png' },
+  { name: 'golden3', file: 'golden3.jpeg' },
+  { name: 'monster', file: 'monster.jpeg' },
+  { name: 'ship', file: 'ship.jpeg' },
+]
+
 export function defaultOptions() {
   const opts = {
     mode: 'multicolor',

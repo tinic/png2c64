@@ -2,7 +2,7 @@
 import { ref, reactive, watch, nextTick } from 'vue'
 import { useWasm } from '../composables/useWasm.js'
 import { useImageUpload } from '../composables/useImageUpload.js'
-import { MODES, PALETTES, DITHER_METHODS, SLIDERS, defaultOptions, isSpriteMode, spriteGridDimensions, hasPrgExport } from '../lib/options.js'
+import { MODES, PALETTES, DITHER_METHODS, SLIDERS, EXAMPLES, defaultOptions, isSpriteMode, spriteGridDimensions, hasPrgExport } from '../lib/options.js'
 
 import InputNumber from 'primevue/inputnumber'
 
@@ -16,6 +16,13 @@ import Panel from 'primevue/panel'
 
 const { loading: wasmLoading, error: wasmError, convertRGBA, convertPNG, convertPRG } = useWasm()
 const { imageBytes, imageName, imageUrl, dragOver, onDrop, onDragOver, onDragLeave, openPicker } = useImageUpload()
+
+// Load dragon example by default once WASM is ready
+watch(wasmLoading, (loading) => {
+  if (!loading && !imageBytes.value) {
+    loadExample(EXAMPLES.find(e => e.name === 'dragon'))
+  }
+})
 
 const options = reactive(defaultOptions())
 const canvasRef = ref(null)
@@ -136,6 +143,16 @@ function resetOptions() {
   Object.assign(options, defaultOptions())
 }
 
+async function loadExample(example) {
+  const resp = await fetch(`/examples/${example.file}`)
+  const buf = await resp.arrayBuffer()
+  imageBytes.value = new Uint8Array(buf)
+  imageName.value = example.file
+  // Update imageUrl for the thumbnail preview
+  const blob = new Blob([buf], { type: example.file.endsWith('.jpeg') ? 'image/jpeg' : 'image/png' })
+  imageUrl.value = URL.createObjectURL(blob)
+}
+
 function onFileSelect(event) {
   const file = event.files?.[0]
   if (!file) return
@@ -187,6 +204,20 @@ function onFileSelect(event) {
                 <div class="font-semibold text-sm">Drop image here</div>
                 <div class="text-xs text-color-secondary">or click to browse</div>
               </template>
+            </div>
+            <div class="mt-3">
+              <label class="block text-xs text-color-secondary font-semibold mb-2">Examples</label>
+              <div class="flex flex-wrap gap-1">
+                <div
+                  v-for="ex in EXAMPLES" :key="ex.name"
+                  class="example-thumb cursor-pointer border-round overflow-hidden"
+                  :class="{ 'ring-1 ring-primary': imageName === ex.file }"
+                  @click="loadExample(ex)"
+                  :title="ex.name"
+                >
+                  <img :src="`/examples/${ex.file}`" :alt="ex.name" />
+                </div>
+              </div>
             </div>
           </Panel>
 
@@ -327,6 +358,21 @@ function onFileSelect(event) {
   display: block;
   max-height: 200px;
   object-fit: contain;
+}
+
+.example-thumb {
+  width: 48px;
+  height: 36px;
+  transition: opacity 0.15s;
+}
+.example-thumb:hover {
+  opacity: 0.8;
+}
+.example-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .preview-container {
