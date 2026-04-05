@@ -346,7 +346,7 @@ function onFileSelect(event) {
                     <i class="pi pi-images mb-2" style="font-size: 1.5rem"></i>
                     <div class="font-semibold text-sm">Drop or click to load your own image</div>
                     <div class="text-xs mt-1" style="opacity: 0.7">Or pick an example below</div>
-                    <div class="text-xs mt-2" style="opacity: 0.5">CLI tool with more features on <a href="https://github.com/tinic/png2c64" target="_blank" style="color: inherit;">GitHub</a></div>
+                    <div class="text-xs mt-2" style="opacity: 0.5">CLI tool with more features on <a href="https://github.com/tinic/png2c64" target="_blank" style="color: inherit;" @click="track('github-click')">GitHub</a></div>
                   </div>
                 </div>
                 <div class="text-xs text-color-secondary mt-2 px-1 flex justify-content-between overflow-hidden">
