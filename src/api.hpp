@@ -9,7 +9,7 @@ namespace png2c64::api {
 
 struct Options {
     std::string mode = "multicolor";
-    std::string palette = "pepto";
+    std::string palette = "colodore";
     std::string dither = "checker";
     float gamma = 1.5f;
     float brightness = 0.0f;

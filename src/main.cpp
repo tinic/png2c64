@@ -45,7 +45,7 @@ struct Config {
     std::string input_path;
     std::string output_path;
     vic2::Mode mode = vic2::Mode::multicolor;
-    std::string palette_name = "pepto";
+    std::string palette_name = "colodore";
     dither::Settings dither_settings{};
     preprocess::Settings preprocess{};
     std::optional<std::size_t> width;
@@ -66,7 +66,7 @@ void print_usage() {
         "Options:\n"
         "  --mode hires|multicolor|fli|afli|sprite-hi|sprite-mc|charset-hi|charset-mc\n"
         "                                  VIC-II mode (default: multicolor)\n"
-        "  --palette <name>                Color palette (default: pepto)\n"
+        "  --palette <name>                Color palette (default: colodore)\n"
         "     pepto, vice, colodore, deekay, godot, c64wiki, levy\n"
         "  --dither <method>               Dithering method (default: checker)\n"
         "     Square:  none, bayer4, bayer8, fs, atkinson, sierra\n"

@@ -95,7 +95,7 @@ export const EXAMPLES = [
 export function defaultOptions() {
   const opts = {
     mode: 'multicolor',
-    palette: 'pepto',
+    palette: 'colodore',
     dither: 'checker',
     serpentine: true,
     matchRange: false,

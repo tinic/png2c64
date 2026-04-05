@@ -104,7 +104,7 @@ Result<Image> load_and_preprocess(const std::uint8_t* input_data,
     preprocess::apply(image, pp);
 
     auto pal = palette::by_name(options.palette);
-    if (pal.colors.empty()) pal = palette::by_name("pepto");
+    if (pal.colors.empty()) pal = palette::by_name("colodore");
     if (options.match_range)
         preprocess::match_palette_range(image, pal);
 
@@ -146,7 +146,7 @@ Result<Image> run_charset_pipeline(const std::uint8_t* input_data,
     }
 
     auto pal = palette::by_name(options.palette);
-    if (pal.colors.empty()) pal = palette::by_name("pepto");
+    if (pal.colors.empty()) pal = palette::by_name("colodore");
 
     auto ds = make_dither_settings(options);
     auto result = charset::convert(*image, pal, mc, ds);
@@ -174,7 +174,7 @@ Result<PipelineResult> run_pipeline(const std::uint8_t* input_data,
     if (!image) return std::unexpected{image.error()};
 
     auto pal = palette::by_name(options.palette);
-    if (pal.colors.empty()) pal = palette::by_name("pepto");
+    if (pal.colors.empty()) pal = palette::by_name("colodore");
 
     auto ds = make_dither_settings(options);
 
@@ -460,7 +460,7 @@ ConvertResult convert_header(const std::uint8_t* input_data,
         }
 
         auto pal = palette::by_name(options.palette);
-        if (pal.colors.empty()) pal = palette::by_name("pepto");
+        if (pal.colors.empty()) pal = palette::by_name("colodore");
 
         auto ds = make_dither_settings(options);
         auto result = charset::convert(*image, pal, mc, ds);
