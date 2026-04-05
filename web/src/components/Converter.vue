@@ -3,6 +3,7 @@ import { ref, reactive, watch, nextTick } from 'vue'
 import { useWasm } from '../composables/useWasm.js'
 import { useImageUpload } from '../composables/useImageUpload.js'
 import { MODES, PALETTES, DITHER_METHODS, SLIDERS, DIFFUSION_SLIDERS, EXAMPLES, defaultOptions, isSpriteMode, isCharsetMode, spriteGridDimensions, hasPrgExport, isErrorDiffusion } from '../lib/options.js'
+import { track } from '../lib/analytics.js'
 
 import InputNumber from 'primevue/inputnumber'
 
@@ -15,7 +16,7 @@ import FileUpload from 'primevue/fileupload'
 import Panel from 'primevue/panel'
 
 const { loading: wasmLoading, error: wasmError, convertRGBA, convertPNG, convertPRG, convertHeader, convertRaw } = useWasm()
-const { imageBytes, imageName, imageUrl, dragOver, onDrop, onDragOver, onDragLeave, openPicker } = useImageUpload()
+const { imageBytes, imageName, imageUrl, dragOver, uploadTimestamp, onDrop, onDragOver, onDragLeave, openPicker } = useImageUpload()
 
 const showUploadHint = ref(true)
 
@@ -42,6 +43,12 @@ const converting = ref(false)
 const crtEnabled = ref(false)
 const resultInfo = ref('')
 const errorMsg = ref('')
+
+// Analytics state
+const pageLoadTime = Date.now()
+let firstConvertTracked = false
+let exportCount = 0
+let uploadTime = 0
 
 // Flatten dither methods for Select component
 const ditherOptions = DITHER_METHODS.flatMap(g =>
@@ -77,11 +84,13 @@ function doConvert() {
     await nextTick()
     await new Promise(r => setTimeout(r, 10))
 
+    const t0 = performance.now()
     try {
       const result = convertRGBA(imageBytes.value, buildWasmOptions())
 
       if (result.error) {
         errorMsg.value = result.error
+        track('error', { type: 'convert', message: result.error, mode: options.mode })
         converting.value = false
         return
       }
@@ -116,8 +125,25 @@ function doConvert() {
       }
 
       resultInfo.value = `${result.width} x ${result.height}`
+      const convertMs = Math.round(performance.now() - t0)
+      track('convert', {
+        mode: options.mode, palette: options.palette, dither: options.dither,
+        gamma: options.gamma, ditherStrength: options.ditherStrength,
+        brightness: options.brightness, contrast: options.contrast,
+        saturation: options.saturation, hueShift: options.hueShift,
+        sharpen: options.sharpen, blackPoint: options.blackPoint,
+        whitePoint: options.whitePoint, errorClamp: options.errorClamp,
+        adaptive: options.adaptive, serpentine: options.serpentine,
+        matchRange: options.matchRange, crt: crtEnabled.value,
+        convertMs,
+      })
+      if (!firstConvertTracked) {
+        firstConvertTracked = true
+        track('first-convert-time', { seconds: Math.round((Date.now() - pageLoadTime) / 1000) })
+      }
     } catch (e) {
       errorMsg.value = e.message
+      track('error', { type: 'convert-exception', message: e.message })
     }
 
     converting.value = false
@@ -126,8 +152,42 @@ function doConvert() {
 
 watch([imageBytes, crtEnabled, () => ({ ...options })], doConvert, { deep: true })
 
+// Track individual setting changes
+watch(() => options.mode, (to, from) => { if (from !== undefined) track('mode-change', { from, to }) })
+watch(() => options.palette, (to, from) => { if (from !== undefined) track('palette-change', { from, to }) })
+watch(() => options.dither, (to, from) => { if (from !== undefined) track('dither-change', { from, to }) })
+watch(crtEnabled, (val) => { track('crt-toggle', { enabled: val }) })
+
+// Track slider tweaks (debounced — fires after the user stops dragging)
+let tweakTimer = null
+for (const key of ['gamma', 'ditherStrength', 'brightness', 'contrast', 'saturation',
+    'hueShift', 'sharpen', 'blackPoint', 'whitePoint', 'errorClamp', 'adaptive']) {
+  watch(() => options[key], (val) => {
+    clearTimeout(tweakTimer)
+    tweakTimer = setTimeout(() => track('setting-tweak', { key, value: val }), 500)
+  })
+}
+watch(() => options.serpentine, (val) => { track('setting-tweak', { key: 'serpentine', value: val }) })
+watch(() => options.matchRange, (val) => { track('setting-tweak', { key: 'matchRange', value: val }) })
+
+// Session duration on page unload
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    track('session-duration', { seconds: Math.round((Date.now() - pageLoadTime) / 1000) })
+  })
+}
+
+function trackExport(format) {
+  exportCount++
+  const data = { format, mode: options.mode, exportCount }
+  if (uploadTimestamp.value > 0)
+    data.secsSinceUpload = Math.round((Date.now() - uploadTimestamp.value) / 1000)
+  track('export', data)
+}
+
 function downloadPNG() {
   if (!imageBytes.value) return
+  trackExport('png')
   try {
     const result = convertPNG(imageBytes.value, buildWasmOptions())
     if (result.error) {
@@ -148,6 +208,7 @@ function downloadPNG() {
 
 function downloadPRG() {
   if (!imageBytes.value) return
+  trackExport('prg')
   try {
     const result = convertPRG(imageBytes.value, buildWasmOptions())
     if (result.error) {
@@ -168,6 +229,7 @@ function downloadPRG() {
 
 function downloadHeader() {
   if (!imageBytes.value) return
+  trackExport('header')
   try {
     const stem = (imageName.value || 'image').replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9]/g, '_')
     const result = convertHeader(imageBytes.value, buildWasmOptions(), stem)
@@ -189,6 +251,7 @@ function downloadHeader() {
 
 function downloadRaw(format) {
   if (!imageBytes.value) return
+  trackExport(format)
   try {
     const result = convertRaw(imageBytes.value, buildWasmOptions(), format)
     if (result.error) {
@@ -210,6 +273,7 @@ function downloadRaw(format) {
 
 function resetOptions() {
   Object.assign(options, defaultOptions())
+  track('reset')
 }
 
 function dismissHint() {
@@ -221,6 +285,7 @@ async function loadExample(example) {
   // Reset to defaults, then apply example-specific settings
   Object.assign(options, defaultOptions())
   if (example.opts) Object.assign(options, example.opts)
+  track('example', { name: example.name })
   const resp = await fetch(`/examples/${example.file}`)
   const buf = await resp.arrayBuffer()
   imageBytes.value = new Uint8Array(buf)

@@ -1,10 +1,12 @@
 import { ref, onUnmounted } from 'vue'
+import { track } from '../lib/analytics.js'
 
 export function useImageUpload() {
   const imageBytes = ref(null)
   const imageName = ref('')
   const imageUrl = ref(null)
   const dragOver = ref(false)
+  const uploadTimestamp = ref(0)
 
   function revokeUrl() {
     if (imageUrl.value) {
@@ -22,6 +24,13 @@ export function useImageUpload() {
     imageName.value = file.name
     revokeUrl()
     imageUrl.value = URL.createObjectURL(file)
+    // Track upload with dimensions
+    uploadTimestamp.value = Date.now()
+    const img = new Image()
+    img.onload = () => {
+      track('upload', { type: file.type, size: Math.round(file.size / 1024), width: img.width, height: img.height })
+    }
+    img.src = imageUrl.value
   }
 
   function onDrop(e) {
@@ -49,5 +58,5 @@ export function useImageUpload() {
 
   onUnmounted(revokeUrl)
 
-  return { imageBytes, imageName, imageUrl, dragOver, onDrop, onDragOver, onDragLeave, openPicker }
+  return { imageBytes, imageName, imageUrl, dragOver, uploadTimestamp, onDrop, onDragOver, onDragLeave, openPicker }
 }
