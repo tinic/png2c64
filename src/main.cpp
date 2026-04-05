@@ -812,9 +812,9 @@ void run_interactive(const Image& scaled_image, Config& config,
         case 'h': pp.hue_shift = std::min(pp.hue_shift + 5.0f, 180.0f); break;
         case 'H': pp.hue_shift = std::max(pp.hue_shift - 5.0f, -180.0f); break;
 
-        // Sharpen
+        // Sharpen (negative = blur)
         case 'n': pp.sharpen = std::min(pp.sharpen + step, 2.0f); break;
-        case 'N': pp.sharpen = std::max(pp.sharpen - step, 0.0f); break;
+        case 'N': pp.sharpen = std::max(pp.sharpen - step, -1.0f); break;
 
         // Black/white point
         case '[': pp.black_point = std::min(pp.black_point + 0.01f, 0.4f); break;

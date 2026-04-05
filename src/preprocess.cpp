@@ -11,31 +11,74 @@ namespace png2c64::preprocess {
 
 namespace {
 
-// 3x3 unsharp mask: sharpen = strength of the effect
+// Sharpen/blur in OKLab L channel.
+// Positive = unsharp mask (3x3 kernel).
+// Negative = multi-pass box blur (radius scales with magnitude).
 void apply_sharpen(Image& image, float strength) {
-    if (strength <= 0.0f) return;
+    if (std::abs(strength) < 0.01f) return;
 
     auto w = image.width();
     auto h = image.height();
-    // Work on a copy of L channel in OKLab
-    std::vector<float> L_orig(w * h);
+
+    // Convert to OKLab L
+    std::vector<float> L(w * h);
     for (std::size_t y = 0; y < h; ++y)
         for (std::size_t x = 0; x < w; ++x)
-            L_orig[y * w + x] = color_space::linear_to_oklab(image[x, y]).L;
+            L[y * w + x] = color_space::linear_to_oklab(image[x, y]).L;
 
-    for (std::size_t y = 1; y + 1 < h; ++y) {
-        for (std::size_t x = 1; x + 1 < w; ++x) {
-            // 3x3 box blur of L
-            float blur = 0.0f;
-            for (int dy = -1; dy <= 1; ++dy)
-                for (int dx = -1; dx <= 1; ++dx)
-                    blur += L_orig[(y + static_cast<std::size_t>(dy)) * w +
-                                   (x + static_cast<std::size_t>(dx))];
-            blur /= 9.0f;
+    if (strength > 0.0f) {
+        // Sharpen: 3x3 unsharp mask
+        auto L_orig = L;
+        for (std::size_t y = 1; y + 1 < h; ++y) {
+            for (std::size_t x = 1; x + 1 < w; ++x) {
+                float blur = 0.0f;
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (int dx = -1; dx <= 1; ++dx)
+                        blur += L_orig[(y + static_cast<std::size_t>(dy)) * w +
+                                       (x + static_cast<std::size_t>(dx))];
+                blur /= 9.0f;
+                L[y * w + x] += (L_orig[y * w + x] - blur) * strength;
+            }
+        }
+    } else {
+        // Blur: blend original toward multi-pass box-blurred version.
+        // |strength| controls mix: -0.1 = subtle, -1.0 = fully blurred.
+        // Always 3 passes (approximates Gaussian), strength controls blend.
+        float blur_amount = std::clamp(-strength, 0.0f, 1.0f);
+        auto L_orig = L;
+        std::vector<float> tmp(w * h);
+        for (int p = 0; p < 3; ++p) {
+            for (std::size_t y = 0; y < h; ++y) {
+                for (std::size_t x = 0; x < w; ++x) {
+                    float sum = 0.0f;
+                    float count = 0.0f;
+                    for (int dy = -1; dy <= 1; ++dy) {
+                        for (int dx = -1; dx <= 1; ++dx) {
+                            auto ny = static_cast<int>(y) + dy;
+                            auto nx = static_cast<int>(x) + dx;
+                            if (ny >= 0 && static_cast<std::size_t>(ny) < h &&
+                                nx >= 0 && static_cast<std::size_t>(nx) < w) {
+                                sum += L[static_cast<std::size_t>(ny) * w +
+                                         static_cast<std::size_t>(nx)];
+                                count += 1.0f;
+                            }
+                        }
+                    }
+                    tmp[y * w + x] = sum / count;
+                }
+            }
+            std::swap(L, tmp);
+        }
+        // L is now fully blurred. Blend with original.
+        for (std::size_t i = 0; i < w * h; ++i)
+            L[i] = L_orig[i] + (L[i] - L_orig[i]) * blur_amount;
+    }
 
+    // Write back
+    for (std::size_t y = 0; y < h; ++y) {
+        for (std::size_t x = 0; x < w; ++x) {
             auto lab = color_space::linear_to_oklab(image[x, y]);
-            float detail = lab.L - blur;
-            lab.L += detail * strength;
+            lab.L = std::clamp(L[y * w + x], 0.0f, 1.0f);
             image[x, y] = color_space::oklab_to_linear(lab).clamped();
         }
     }

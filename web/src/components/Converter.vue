@@ -340,25 +340,31 @@ function onFileSelect(event) {
           <Panel header="Adjustments">
             <div class="flex flex-column gap-3">
               <div v-for="s in SLIDERS" :key="s.key" class="grid align-items-center">
-                <label class="col-4 text-xs text-color-secondary font-semibold white-space-nowrap" :title="s.tip">{{ s.label }}</label>
+                <label class="col-3 text-xs text-color-secondary font-semibold white-space-nowrap" :title="s.tip">{{ s.label }}</label>
                 <div class="col-6">
                   <Slider v-model="options[s.key]" :min="s.min" :max="s.max" :step="s.step" class="w-full" />
                 </div>
-                <span class="col-2 text-xs font-mono font-semibold text-right">{{ options[s.key].toFixed(2) }}</span>
+                <div class="col-3">
+                  <InputNumber v-model="options[s.key]" :min="s.min" :max="s.max" :step="s.step"
+                    :minFractionDigits="2" :maxFractionDigits="2" class="w-full input-sm" />
+                </div>
               </div>
 
               <template v-if="isErrorDiffusion(options.dither)">
                 <div v-for="s in DIFFUSION_SLIDERS" :key="s.key" class="grid align-items-center">
-                  <label class="col-4 text-xs text-color-secondary font-semibold white-space-nowrap" :title="s.tip">{{ s.label }}</label>
+                  <label class="col-3 text-xs text-color-secondary font-semibold white-space-nowrap" :title="s.tip">{{ s.label }}</label>
                   <div class="col-6">
                     <Slider v-model="options[s.key]" :min="s.min" :max="s.max" :step="s.step" class="w-full" />
                   </div>
-                  <span class="col-2 text-xs font-mono font-semibold text-right">{{ options[s.key].toFixed(2) }}</span>
+                  <div class="col-3">
+                    <InputNumber v-model="options[s.key]" :min="s.min" :max="s.max" :step="s.step"
+                      :minFractionDigits="2" :maxFractionDigits="2" class="w-full input-sm" />
+                  </div>
                 </div>
 
                 <div class="grid align-items-center">
-                  <label class="col-4 text-xs text-color-secondary font-semibold" title="Alternate scan direction per row in error diffusion. Reduces directional banding.">Serpentine</label>
-                  <div class="col-8">
+                  <label class="col-3 text-xs text-color-secondary font-semibold" title="Alternate scan direction per row in error diffusion. Reduces directional banding.">Serpentine</label>
+                  <div class="col-9">
                     <ToggleSwitch v-model="options.serpentine" />
                   </div>
                 </div>
@@ -436,9 +442,14 @@ function onFileSelect(event) {
   font-size: 0.75rem;
 }
 
+:deep(.input-sm) {
+  max-width: 100%;
+}
 :deep(.input-sm .p-inputnumber-input) {
   font-size: 0.75rem;
-  padding: 0.4rem 0.5rem;
+  padding: 0.25rem 0.3rem;
+  width: 100%;
+  min-width: 0;
 }
 
 .preview-col {

@@ -2,6 +2,8 @@
 
 Convert images to Commodore 64 VIC-II formats with perceptual color matching, dithering, and brute-force quantization.
 
+**[Try it in your browser at png2c64.app](https://png2c64.app)** — no installation required.
+
 Built for C64 demo scene production. All color operations use OKLab perceptual color space. Multithreaded.
 
 ## Examples

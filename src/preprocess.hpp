@@ -10,7 +10,7 @@ struct Settings {
     float saturation = 1.0f;  // [0, 3] chroma scaling
     float gamma      = 1.0f;  // [0.1, 8] power curve
     float hue_shift  = 0.0f;  // [-180, 180] degrees rotation in OKLab a/b plane
-    float sharpen    = 0.0f;  // [0, 2] unsharp mask strength
+    float sharpen    = 0.0f;  // [-1, 2] negative = blur, positive = sharpen
     float black_point = 0.0f; // [0, 0.5] clip darkest fraction
     float white_point = 0.0f; // [0, 0.5] clip brightest fraction
 };
