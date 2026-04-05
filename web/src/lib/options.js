@@ -48,13 +48,20 @@ export const DITHER_METHODS = [
 ]
 
 export const SLIDERS = [
-  { key: 'gamma',          label: 'Gamma',      min: 0.1, max: 5.0, step: 0.05, default: 1.0  },
-  { key: 'brightness',     label: 'Brightness',  min: -1,  max: 1.0, step: 0.05, default: 0.0  },
-  { key: 'contrast',       label: 'Contrast',    min: 0,   max: 3.0, step: 0.05, default: 1.0  },
-  { key: 'saturation',     label: 'Saturation',  min: 0,   max: 3.0, step: 0.05, default: 1.0  },
-  { key: 'ditherStrength', label: 'Strength',    min: 0,   max: 3.0, step: 0.05, default: 1.0  },
-  { key: 'errorClamp',     label: 'Error Clamp', min: 0,   max: 2.0, step: 0.05, default: 0.8  },
-  { key: 'adaptive',       label: 'Adaptive',    min: 0,   max: 1.0, step: 0.05, default: 0.0  },
+  { key: 'gamma',          label: 'Gamma',       min: 0.1, max: 5.0, step: 0.05, default: 1.0,
+    tip: 'Power curve applied before color matching. >1 darkens midtones, <1 brightens them.' },
+  { key: 'brightness',     label: 'Brightness',  min: -1,  max: 1.0, step: 0.05, default: 0.0,
+    tip: 'Additive lightness shift in perceptual OKLab space.' },
+  { key: 'contrast',       label: 'Contrast',    min: 0,   max: 3.0, step: 0.05, default: 1.0,
+    tip: 'Scale around perceptual mid-grey. 1.0 = no change, >1 increases contrast.' },
+  { key: 'saturation',     label: 'Saturation',  min: 0,   max: 3.0, step: 0.05, default: 1.0,
+    tip: 'Chroma scaling in OKLab space. 0 = greyscale, 1 = original, >1 = boosted color.' },
+  { key: 'ditherStrength', label: 'Strength',    min: 0,   max: 3.0, step: 0.05, default: 1.0,
+    tip: 'Dithering intensity. 0 = no dithering effect, 1 = standard, >1 = exaggerated.' },
+  { key: 'errorClamp',     label: 'Error Clamp', min: 0,   max: 2.0, step: 0.05, default: 0.8,
+    tip: 'Max error accumulation per channel. Lower = fewer stray pixels, higher = more detail.' },
+  { key: 'adaptive',       label: 'Adaptive',    min: 0,   max: 1.0, step: 0.05, default: 0.0,
+    tip: 'Contrast-adaptive error diffusion. Reduces dithering in detailed areas, keeps it in flat areas.' },
 ]
 
 export const EXAMPLES = [

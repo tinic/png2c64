@@ -225,7 +225,7 @@ function onFileSelect(event) {
           <Panel header="Settings">
             <div class="flex flex-column gap-3">
               <div class="grid align-items-center">
-                <label class="col-4 text-xs text-color-secondary font-semibold">Mode</label>
+                <label class="col-4 text-xs text-color-secondary font-semibold" title="VIC-II graphics mode. Multicolor: 160x200, 4 colors/cell. Hires: 320x200, 2 colors/cell.">Mode</label>
                 <div class="col-8">
                   <Select v-model="options.mode" :options="MODES" optionValue="value" optionLabel="label" class="w-full" />
                 </div>
@@ -233,13 +233,13 @@ function onFileSelect(event) {
 
               <template v-if="isSpriteMode(options.mode)">
                 <div class="grid align-items-center">
-                  <label class="col-4 text-xs text-color-secondary font-semibold">Sprites X</label>
+                  <label class="col-4 text-xs text-color-secondary font-semibold" title="Number of sprites horizontally in the sheet.">Sprites X</label>
                   <div class="col-8">
                     <InputNumber v-model="options.spritesX" :min="1" :max="32" showButtons class="w-full input-sm" />
                   </div>
                 </div>
                 <div class="grid align-items-center">
-                  <label class="col-4 text-xs text-color-secondary font-semibold">Sprites Y</label>
+                  <label class="col-4 text-xs text-color-secondary font-semibold" title="Number of sprites vertically in the sheet.">Sprites Y</label>
                   <div class="col-8">
                     <InputNumber v-model="options.spritesY" :min="1" :max="32" showButtons class="w-full input-sm" />
                   </div>
@@ -247,14 +247,14 @@ function onFileSelect(event) {
               </template>
 
               <div class="grid align-items-center">
-                <label class="col-4 text-xs text-color-secondary font-semibold">Palette</label>
+                <label class="col-4 text-xs text-color-secondary font-semibold" title="VIC-II color palette. Different palettes match different emulators and measurements.">Palette</label>
                 <div class="col-8">
                   <Select v-model="options.palette" :options="PALETTES" optionValue="value" optionLabel="label" class="w-full" />
                 </div>
               </div>
 
               <div class="grid align-items-center">
-                <label class="col-4 text-xs text-color-secondary font-semibold">Dither</label>
+                <label class="col-4 text-xs text-color-secondary font-semibold" title="Dithering algorithm. Ordered methods use fixed patterns; error diffusion propagates quantization error to neighbors.">Dither</label>
                 <div class="col-8">
                   <Select
                     v-model="options.dither"
@@ -274,7 +274,7 @@ function onFileSelect(event) {
           <Panel header="Adjustments">
             <div class="flex flex-column gap-3">
               <div v-for="s in SLIDERS" :key="s.key" class="grid align-items-center">
-                <label class="col-4 text-xs text-color-secondary font-semibold white-space-nowrap">{{ s.label }}</label>
+                <label class="col-4 text-xs text-color-secondary font-semibold white-space-nowrap" :title="s.tip">{{ s.label }}</label>
                 <div class="col-6">
                   <Slider v-model="options[s.key]" :min="s.min" :max="s.max" :step="s.step" class="w-full" />
                 </div>
@@ -282,7 +282,7 @@ function onFileSelect(event) {
               </div>
 
               <div class="grid align-items-center">
-                <label class="col-4 text-xs text-color-secondary font-semibold">Serpentine</label>
+                <label class="col-4 text-xs text-color-secondary font-semibold" title="Alternate scan direction per row in error diffusion. Reduces directional banding.">Serpentine</label>
                 <div class="col-8">
                   <ToggleSwitch v-model="options.serpentine" />
                 </div>
