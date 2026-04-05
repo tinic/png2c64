@@ -19,19 +19,11 @@ const { imageBytes, imageName, imageUrl, dragOver, onDrop, onDragOver, onDragLea
 
 const showUploadHint = ref(true)
 
-// Load dragon example by default once WASM is ready (don't dismiss hint)
+// Load dragon example by default once WASM is ready
 watch(wasmLoading, (loading) => {
   if (!loading && !imageBytes.value) {
     const dragon = EXAMPLES.find(e => e.name === 'dragon')
-    fetch(`/examples/${dragon.file}`)
-      .then(r => r.arrayBuffer())
-      .then(buf => {
-        imageBytes.value = new Uint8Array(buf)
-        imageName.value = dragon.file
-        const blob = new Blob([buf], { type: 'image/png' })
-        imageUrl.value = URL.createObjectURL(blob)
-        // keep showUploadHint = true for the default load
-      })
+    loadExample(dragon).then(() => { showUploadHint.value = true })
   }
 })
 

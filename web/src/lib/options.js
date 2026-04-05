@@ -82,10 +82,10 @@ export const DIFFUSION_SLIDERS = [
 ]
 
 export const EXAMPLES = [
-  { name: 'alien', file: 'alien.png', opts: { gamma: 0.8, ditherStrength: 0.8 } },
+  { name: 'alien', file: 'alien.png', opts: { gamma: 1.0, ditherStrength: 2.0, matchRange: true } },
   { name: 'dog', file: 'dog.png', opts: { gamma: 3.0, ditherStrength: 1.5 } },
   { name: 'dragon', file: 'dragon.png', opts: { gamma: 1.0, ditherStrength: 1.5, matchRange: true } },
-  { name: 'face', file: 'face.png', opts: { gamma: 3.0, ditherStrength: 1.0 } },
+  { name: 'face', file: 'face.png', opts: { gamma: 3.0, ditherStrength: 1.0, sharpen: -0.5, saturation: 0.5 } },
   { name: 'fantasy', file: 'fantasy.png', opts: { gamma: 1.0, ditherStrength: 1.5, matchRange: true } },
   { name: 'game', file: 'game.png', opts: { gamma: 2.0, ditherStrength: 1.5 } },
   { name: 'golden3', file: 'golden3.jpeg', opts: { gamma: 2.0, ditherStrength: 1.5, matchRange: true } },

@@ -101,8 +101,17 @@ add_example(ship    jpeg GAMMA 2.0 DITHER_STRENGTH 1.5 MATCH_RANGE)
 add_example(dragon  png  GAMMA 1.0 DITHER_STRENGTH 1.5 MATCH_RANGE)
 add_example(fantasy png  GAMMA 1.0 DITHER_STRENGTH 1.5 MATCH_RANGE)
 add_example(dog     png  GAMMA 3.0 DITHER_STRENGTH 1.5)
-add_example(alien   png  GAMMA 0.8 DITHER_STRENGTH 0.8)
-add_example(face    png  GAMMA 3.0 DITHER_STRENGTH 1.0)
+add_example(alien   png  GAMMA 1.0 DITHER_STRENGTH 2.0 MATCH_RANGE)
+add_test(
+    NAME "convert-face"
+    COMMAND png2c64
+        --gamma 3.0
+        --dither-strength 1.0
+        --sharpen -0.5
+        --saturation 0.5
+        "${EXAMPLES_DIR}/face.png"
+        "${EXAMPLES_DIR}/face-c64.png"
+)
 add_example(game    png  GAMMA 2.0 DITHER_STRENGTH 1.5)
 
 add_test(
