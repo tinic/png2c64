@@ -58,6 +58,10 @@ export const SLIDERS = [
     tip: 'Chroma scaling in OKLab space. 0 = greyscale, 1 = original, >1 = boosted color.' },
   { key: 'ditherStrength', label: 'Strength',    min: 0,   max: 3.0, step: 0.05, default: 1.0,
     tip: 'Dithering intensity. 0 = no dithering effect, 1 = standard, >1 = exaggerated.' },
+]
+
+// These only apply to error diffusion dither methods
+export const DIFFUSION_SLIDERS = [
   { key: 'errorClamp',     label: 'Error Clamp', min: 0,   max: 2.0, step: 0.05, default: 0.8,
     tip: 'Max error accumulation per channel. Lower = fewer stray pixels, higher = more detail.' },
   { key: 'adaptive',       label: 'Adaptive',    min: 0,   max: 1.0, step: 0.05, default: 0.0,
@@ -87,7 +91,7 @@ export function defaultOptions() {
     spritesX: 1,
     spritesY: 1,
   }
-  for (const s of SLIDERS) opts[s.key] = s.default
+  for (const s of [...SLIDERS, ...DIFFUSION_SLIDERS]) opts[s.key] = s.default
   return opts
 }
 
@@ -97,6 +101,12 @@ export function isSpriteMode(mode) {
 
 export function hasPrgExport(mode) {
   return mode === 'multicolor' || mode === 'hires'
+}
+
+const ERROR_DIFFUSION = new Set(['fs', 'atkinson', 'sierra', 'fs-wide', 'jarvis', 'line-fs'])
+
+export function isErrorDiffusion(dither) {
+  return ERROR_DIFFUSION.has(dither)
 }
 
 // Compute width/height from sprite grid for the WASM API
