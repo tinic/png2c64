@@ -35,9 +35,12 @@ watch(wasmLoading, (loading) => {
   }
 })
 
+import { applyCRT } from '../lib/crt.js'
+
 const options = reactive(defaultOptions())
 const canvasRef = ref(null)
 const converting = ref(false)
+const crtEnabled = ref(false)
 const resultInfo = ref('')
 const errorMsg = ref('')
 
@@ -87,17 +90,31 @@ function doConvert() {
       const canvas = canvasRef.value
       if (!canvas) return
 
-      canvas.width = result.width
-      canvas.height = result.height
+      const scale = crtEnabled.value ? 4 : 2
+      const dw = result.width * scale
+      const dh = result.height * scale
+      canvas.width = dw
+      canvas.height = dh
       canvas.style.width = `${result.width * 2}px`
       canvas.style.height = `${result.height * 2}px`
 
       const ctx = canvas.getContext('2d')
+      // Draw at 1x then scale up with nearest-neighbor
+      ctx.imageSmoothingEnabled = false
+      const tmp = document.createElement('canvas')
+      tmp.width = result.width
+      tmp.height = result.height
+      const tmpCtx = tmp.getContext('2d')
       const imgData = new ImageData(
         new Uint8ClampedArray(result.rgba),
         result.width, result.height
       )
-      ctx.putImageData(imgData, 0, 0)
+      tmpCtx.putImageData(imgData, 0, 0)
+      ctx.drawImage(tmp, 0, 0, dw, dh)
+
+      if (crtEnabled.value) {
+        applyCRT(ctx, dw, dh)
+      }
 
       resultInfo.value = `${result.width} x ${result.height}`
     } catch (e) {
@@ -108,7 +125,7 @@ function doConvert() {
   }, 150)
 }
 
-watch([imageBytes, () => ({ ...options })], doConvert, { deep: true })
+watch([imageBytes, crtEnabled, () => ({ ...options })], doConvert, { deep: true })
 
 function downloadPNG() {
   if (!imageBytes.value) return
@@ -416,9 +433,16 @@ function onFileSelect(event) {
               <ProgressSpinner style="width: 2rem; height: 2rem" />
             </div>
           </div>
-          <div class="flex justify-content-between px-1">
+          <div class="flex justify-content-between align-items-center px-1">
             <span class="text-xs text-color-secondary">{{ resultInfo }}</span>
-            <span v-if="errorMsg" class="text-xs text-red-400">{{ errorMsg }}</span>
+            <div class="flex align-items-center gap-2">
+              <span v-if="errorMsg" class="text-xs text-red-400">{{ errorMsg }}</span>
+              <label class="flex align-items-center gap-1 text-xs text-color-secondary cursor-pointer"
+                title="Simulate CRT display with scanlines, phosphor bloom, color fringing, and vignette. Display-only.">
+                <ToggleSwitch v-model="crtEnabled" />
+                CRT
+              </label>
+            </div>
           </div>
         </div>
       </div>

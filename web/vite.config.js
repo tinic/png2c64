@@ -14,5 +14,9 @@ export default defineConfig({
       allow: ['..']
     }
   },
-  assetsInclude: ['**/*.wasm']
+  assetsInclude: ['**/*.wasm'],
+  build: {
+    outDir: '../docs',
+    emptyOutDir: true,
+  }
 })
