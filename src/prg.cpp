@@ -1,4 +1,5 @@
 #include "prg.hpp"
+#include "charset.hpp"
 #include "displayer_data.hpp"
 
 #include <cstddef>
@@ -391,6 +392,52 @@ Result<PrgData> petscii_text(const quantize::ScreenResult& screen) {
 
     return build_display_prg(detail::petscii_displayer,
                               sizeof(detail::petscii_displayer),
+                              image_data, 0x2000);
+}
+
+Result<PrgData> charset_text(const charset::CharsetResult& result) {
+    auto num_cells = result.cols * result.rows;
+    if (num_cells == 0 || num_cells > 1000)
+        return std::unexpected{Error{ErrorCode::invalid_dimensions,
+            "Charset requires up to 40x25 = 1000 cells"}};
+
+    // Data layout at $2000:
+    //   $2000-$27FF: charset (2048 bytes)
+    //   $2800-$2BE7: screen map (1000 bytes)
+    //   $2BE8-$2FCF: color RAM (1000 bytes)
+    //   $2FD0: background
+    //   $2FD1: mc_flag (0 = hires, $FF = multicolor)
+    //   $2FD2: mc1
+    //   $2FD3: mc2
+    std::vector<std::uint8_t> image_data;
+    image_data.reserve(2048 + 1000 + 1000 + 4);
+
+    // Charset data (always 2048 bytes)
+    image_data.insert(image_data.end(),
+                      result.charset_data.begin(), result.charset_data.end());
+
+    // Screen map: pad to 1000 bytes
+    image_data.insert(image_data.end(),
+                      result.screen_map.begin(), result.screen_map.end());
+    if (result.screen_map.size() < 1000)
+        image_data.resize(image_data.size() + (1000 - result.screen_map.size()), 0);
+
+    // Color RAM: pad to 1000 bytes
+    // For multicolor text mode, bit 3 must be set to enable MC per character,
+    // and bits 0-2 select the per-cell color (only colors 0-7).
+    for (auto c : result.color_ram)
+        image_data.push_back(result.multicolor ? ((c & 0x07) | 0x08) : (c & 0x0F));
+    if (result.color_ram.size() < 1000)
+        image_data.resize(image_data.size() + (1000 - result.color_ram.size()), 0);
+
+    // Metadata
+    image_data.push_back(result.background & 0x0F);
+    image_data.push_back(result.multicolor ? 0xFF : 0x00);
+    image_data.push_back(result.mc1 & 0x0F);
+    image_data.push_back(result.mc2 & 0x0F);
+
+    return build_display_prg(detail::charset_displayer,
+                              sizeof(detail::charset_displayer),
                               image_data, 0x2000);
 }
 

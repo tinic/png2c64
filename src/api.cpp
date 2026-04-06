@@ -296,8 +296,40 @@ ConvertResult convert_rgba(const std::uint8_t* input_data,
 ConvertResult convert_prg(const std::uint8_t* input_data,
                           std::size_t input_size,
                           const Options& options) {
-    if (is_charset_mode(options.mode))
-        return {{}, 0, 0, "PRG export not supported for charset modes"};
+    if (is_charset_mode(options.mode)) {
+        bool mc = (options.mode == "charset-mc");
+
+        auto target_w = options.width > 0
+            ? static_cast<std::size_t>(options.width) : std::size_t{320};
+        auto target_h = options.height > 0
+            ? static_cast<std::size_t>(options.height) : std::size_t{200};
+
+        auto image = load_and_preprocess(input_data, input_size, options,
+                                          target_w, target_h);
+        if (!image) return {{}, 0, 0, image.error().message};
+
+        if (mc) {
+            auto logical_w = image->width() / 2;
+            auto scaled = scale::bicubic(*image, logical_w, image->height());
+            if (!scaled) return {{}, 0, 0, scaled.error().message};
+            image = std::move(scaled);
+        }
+
+        auto pal = palette::by_name(options.palette);
+        if (pal.colors.empty()) pal = palette::by_name("colodore");
+
+        auto ds = make_dither_settings(options);
+        auto result = charset::convert(*image, pal, mc, ds);
+        if (!result) return {{}, 0, 0, result.error().message};
+
+        auto prg_data = prg::charset_text(*result);
+        if (!prg_data) return {{}, 0, 0, prg_data.error().message};
+
+        auto preview = charset::render(*result, pal);
+        return {std::move(prg_data->bytes),
+                static_cast<int>(preview.width()),
+                static_cast<int>(preview.height()), ""};
+    }
 
     auto result = run_pipeline(input_data, input_size, options);
     if (!result) return {{}, 0, 0, result.error().message};

@@ -556,6 +556,7 @@ ScreenResult quantize_multicolor_bruteforce(
 }
 
 // Multicolor with frequency-based background (for sprites)
+// Shared MC0/MC1 across all sprites, only per-sprite color varies.
 ScreenResult quantize_multicolor_frequency_bg(
     vic2::Mode mode, const Image& image, const Palette& palette,
     const std::vector<color_space::OKLab>& palette_lab,
@@ -565,6 +566,7 @@ ScreenResult quantize_multicolor_frequency_bg(
     auto cx = vic2::cells_x(params);
     auto cy = vic2::cells_y(params);
     auto total_cells = cx * cy;
+    auto n = static_cast<std::uint8_t>(palette.size());
 
     auto bg = find_most_common_color(image, palette, palette_lab);
 
@@ -574,24 +576,55 @@ ScreenResult quantize_multicolor_frequency_bg(
                                             tfn, tstr);
     });
 
+    // Brute force shared MC0/MC1: try all C(15,2) pairs.
+    // For each pair, find the best per-sprite color for each cell.
+    float best_total = std::numeric_limits<float>::max();
+    std::vector<CellResult> best_cells;
+
+    for (std::uint8_t mc0 = 0; mc0 < n; ++mc0) {
+        if (mc0 == bg) continue;
+        for (std::uint8_t mc1 = mc0 + 1; mc1 < n; ++mc1) {
+            if (mc1 == bg) continue;
+
+            float total = 0.0f;
+            std::vector<CellResult> cells(total_cells);
+
+            for (std::size_t idx = 0; idx < total_cells; ++idx) {
+                auto& table = tables[idx];
+                float cell_best = std::numeric_limits<float>::max();
+                std::uint8_t cell_best_k = 0;
+
+                // Try each per-sprite color
+                for (std::uint8_t k = 0; k < n; ++k) {
+                    if (k == bg || k == mc0 || k == mc1) continue;
+                    float err = cell_error_4(table, bg, mc0, mc1, k);
+                    if (err < cell_best) {
+                        cell_best = err;
+                        cell_best_k = k;
+                    }
+                }
+
+                std::array<std::uint8_t, 4> indices = {bg, mc0, mc1, cell_best_k};
+                auto eval = evaluate_cell_full(table, indices);
+
+                cells[idx].pixel_indices = std::move(eval.assignments);
+                cells[idx].cell_colors = {bg, mc0, mc1, cell_best_k};
+                cells[idx].error = eval.error;
+                total += eval.error;
+            }
+
+            if (total < best_total) {
+                best_total = total;
+                best_cells = std::move(cells);
+            }
+        }
+    }
+
     ScreenResult result;
     result.mode = mode;
     result.background_color = bg;
-    result.cells.resize(total_cells);
-
-    std::atomic<float> total_error{0.0f};
-
-    parallel_for_cells(cx, cy, [&](std::size_t idx, std::size_t, std::size_t) {
-        auto cell = quantize_cell_multicolor(tables[idx], bg, palette);
-
-        float current = total_error.load(std::memory_order_relaxed);
-        while (!total_error.compare_exchange_weak(
-            current, current + cell.error, std::memory_order_relaxed)) {}
-
-        result.cells[idx] = std::move(cell);
-    });
-
-    result.total_error = total_error.load();
+    result.cells = std::move(best_cells);
+    result.total_error = best_total;
     return result;
 }
 

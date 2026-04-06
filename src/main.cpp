@@ -1025,24 +1025,49 @@ int main(int argc, char* argv[]) {
         auto preview = charset::render(*result, pal);
         iterm2_display_image(preview, 3);
 
-        // Write C header
+        // Write output
         if (!config->output_path.empty()) {
-            // Derive a C identifier from the output filename
-            auto stem = config->output_path;
-            auto slash = stem.find_last_of('/');
-            if (slash != std::string::npos) stem = stem.substr(slash + 1);
-            auto dot = stem.find_last_of('.');
-            if (dot != std::string::npos) stem = stem.substr(0, dot);
-            // Replace non-alnum with underscore
-            for (auto& ch : stem)
-                if (!std::isalnum(static_cast<unsigned char>(ch))) ch = '_';
+            bool is_png = config->output_path.ends_with(".png");
 
-            std::println("Writing header: {}", config->output_path);
-            auto wr = charset::write_header(config->output_path, *result,
-                                             stem);
-            if (!wr) {
-                std::println(stderr, "Error: {}", wr.error().message);
-                return 1;
+            if (is_png) {
+                std::println("Saving {}...", config->output_path);
+                auto save_result = png_io::save(config->output_path, preview);
+                if (!save_result) {
+                    std::println(stderr, "Error: {}", save_result.error().message);
+                    return 1;
+                }
+            } else {
+                // Derive a C identifier from the output filename
+                auto stem = config->output_path;
+                auto slash = stem.find_last_of('/');
+                if (slash != std::string::npos) stem = stem.substr(slash + 1);
+                auto dot = stem.find_last_of('.');
+                if (dot != std::string::npos) stem = stem.substr(0, dot);
+                // Replace non-alnum with underscore
+                for (auto& ch : stem)
+                    if (!std::isalnum(static_cast<unsigned char>(ch))) ch = '_';
+
+                std::println("Writing header: {}", config->output_path);
+                auto wr = charset::write_header(config->output_path, *result,
+                                                 stem);
+                if (!wr) {
+                    std::println(stderr, "Error: {}", wr.error().message);
+                    return 1;
+                }
+            }
+
+            // Export PRG alongside output
+            auto prg_result = prg::charset_text(*result);
+            if (prg_result) {
+                auto prg_path = config->output_path;
+                auto pdot = prg_path.rfind('.');
+                if (pdot != std::string::npos) prg_path = prg_path.substr(0, pdot);
+                prg_path += ".prg";
+                auto pwr = prg::write(prg_path, *prg_result);
+                if (pwr) {
+                    std::println("PRG: {} ({} bytes)", prg_path,
+                                 prg_result->bytes.size());
+                }
             }
         }
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "charset.hpp"
 #include "quantize.hpp"
 #include "types.hpp"
 #include "vic2.hpp"
@@ -24,6 +25,9 @@ Result<PrgData> hires_bitmap(const quantize::ScreenResult& screen);
 
 // Auto-detect mode and generate the appropriate PRG.
 Result<PrgData> from_screen(const quantize::ScreenResult& screen);
+
+// Generate a charset PRG from a CharsetResult.
+Result<PrgData> charset_text(const charset::CharsetResult& result);
 
 // Generate raw Koala Paint format (.koa): $6000 + bitmap + screen + d800 + bg
 Result<PrgData> koala_raw(const quantize::ScreenResult& screen);

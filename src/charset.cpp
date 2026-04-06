@@ -231,7 +231,8 @@ McColorSelection select_colors_multicolor(
             for (std::size_t ci = 0; ci < num_cells; ++ci) {
                 float best_cell = std::numeric_limits<float>::max();
                 std::uint8_t best_pc = 0;
-                for (std::uint8_t pc = 0; pc < n; ++pc) {
+                // VIC-II MC text mode: color RAM is 3 bits (0-7) + bit 3 = MC enable
+                for (std::uint8_t pc = 0; pc < 8; ++pc) {
                     if (pc == cand.c0 || pc == cand.c1 || pc == cand.c2) continue;
                     std::array<std::uint8_t, 4> colors = {cand.c0, cand.c1, cand.c2, pc};
                     float err = 0.0f;
@@ -600,7 +601,9 @@ void refine_charset(
             float best_err = std::numeric_limits<float>::max();
             std::uint8_t best_pc = color_ram[ci];
 
-            for (std::uint8_t pc = 0; pc < n_pal; ++pc) {
+            // VIC-II MC text mode: color RAM is 3 bits (0-7)
+            auto pc_limit = multicolor ? std::uint8_t{8} : n_pal;
+            for (std::uint8_t pc = 0; pc < pc_limit; ++pc) {
                 if (multicolor && (pc == bg || pc == mc1 || pc == mc2)) continue;
                 if (!multicolor && pc == bg) continue;
 

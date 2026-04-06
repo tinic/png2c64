@@ -115,7 +115,7 @@ export function isSpriteMode(mode) {
 }
 
 export function hasPrgExport(mode) {
-  return mode === 'multicolor' || mode === 'hires' || mode === 'fli' || mode === 'afli' || mode === 'petscii'
+  return mode === 'multicolor' || mode === 'hires' || mode === 'fli' || mode === 'afli' || mode === 'petscii' || mode === 'charset-hi' || mode === 'charset-mc'
 }
 
 export function isCharsetMode(mode) {
