@@ -413,26 +413,30 @@ MixedColorSelection select_colors_mixed(
                     if (err < best_mc_err) { best_mc_err = err; best_mc_pc = pc; }
                 }
 
-                // Try hires: best fg from all 16, using c0 as bg candidate
-                // For each triple ordering, c0 is always the bg candidate
-                auto bg_cand = cand.c0; // will be reassigned later
+                // Try hires: best bg from shared triple + best fg from all 16
+                // Try each shared color as potential background
                 float best_hi_err = std::numeric_limits<float>::max();
                 std::uint8_t best_hi_fg = 0;
-                for (std::uint8_t fg = 0; fg < n; ++fg) {
-                    if (fg == bg_cand) continue;
-                    float err = 0.0f;
-                    for (auto& px : cells_hi[ci]) {
-                        auto& bl = pal_lab[bg_cand];
-                        auto& fl = pal_lab[fg];
-                        float db = (px.L-bl.L)*(px.L-bl.L) + (px.a-bl.a)*(px.a-bl.a) + (px.b-bl.b)*(px.b-bl.b);
-                        float df = (px.L-fl.L)*(px.L-fl.L) + (px.a-fl.a)*(px.a-fl.a) + (px.b-fl.b)*(px.b-fl.b);
-                        err += std::min(db, df);
+                for (auto bg_cand : {cand.c0, cand.c1, cand.c2}) {
+                    for (std::uint8_t fg = 0; fg < n; ++fg) {
+                        if (fg == bg_cand) continue;
+                        float err = 0.0f;
+                        for (auto& px : cells_hi[ci]) {
+                            auto& bl = pal_lab[bg_cand];
+                            auto& fl = pal_lab[fg];
+                            float db = (px.L-bl.L)*(px.L-bl.L) + (px.a-bl.a)*(px.a-bl.a) + (px.b-bl.b)*(px.b-bl.b);
+                            float df = (px.L-fl.L)*(px.L-fl.L) + (px.a-fl.a)*(px.a-fl.a) + (px.b-fl.b)*(px.b-fl.b);
+                            err += std::min(db, df);
+                        }
+                        if (err < best_hi_err) { best_hi_err = err; best_hi_fg = fg; }
                     }
-                    if (err < best_hi_err) { best_hi_err = err; best_hi_fg = fg; }
                 }
 
-                // Pick whichever has lower error
-                if (best_hi_err <= best_mc_err) {
+                // Normalize per-pixel: hires has 64 pixels, MC has 32
+                // Compare average error per pixel for a fair mode decision
+                auto hi_avg = best_hi_err / 64.0f;
+                auto mc_avg = best_mc_err / 32.0f;
+                if (hi_avg <= mc_avg) {
                     cand.is_hires[ci] = true;
                     cand.per_cell[ci] = best_hi_fg;
                     cand.total_error += best_hi_err;
