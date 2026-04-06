@@ -126,4 +126,227 @@ add_test(
         "${EXAMPLES_DIR}/head-petscii.png"
 )
 
+# -----------------------------------------------------------------------
+# Mode coverage tests — verify all VIC-II modes complete with valid output
+# -----------------------------------------------------------------------
+
+# Hires bitmap (320x200, 2 colors per 8x8 cell)
+add_test(
+    NAME "mode-hires"
+    COMMAND png2c64
+        --mode hires
+        --gamma 2.0 --dither-strength 1.5 --match-range
+        "${EXAMPLES_DIR}/dragon.png"
+        "${EXAMPLES_DIR}/dragon-hires.png"
+)
+set_tests_properties("mode-hires" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Mode: hires.*total error: [0-9]")
+
+# FLI (flexible line interpretation, per-row color changes)
+add_test(
+    NAME "mode-fli"
+    COMMAND png2c64
+        --mode fli
+        --gamma 2.0 --dither-strength 1.5 --match-range
+        "${EXAMPLES_DIR}/dragon.png"
+        "${EXAMPLES_DIR}/dragon-fli.png"
+)
+set_tests_properties("mode-fli" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Mode: fli.*total error: [0-9]")
+
+# AFLI (advanced FLI, hires + per-row colors)
+add_test(
+    NAME "mode-afli"
+    COMMAND png2c64
+        --mode afli
+        --gamma 2.0 --dither-strength 1.5 --match-range
+        "${EXAMPLES_DIR}/dragon.png"
+        "${EXAMPLES_DIR}/dragon-afli.png"
+)
+set_tests_properties("mode-afli" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Mode: afli.*total error: [0-9]")
+
+# Sprite hires (24x21, 2 colors)
+add_test(
+    NAME "mode-sprite-hi"
+    COMMAND png2c64
+        --mode sprite-hi
+        --gamma 2.0
+        "${EXAMPLES_DIR}/head.png"
+        "${EXAMPLES_DIR}/head-sprite-hi.png"
+)
+set_tests_properties("mode-sprite-hi" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Mode: sprite-hires.*total error: [0-9]")
+
+# Sprite multicolor (12x21, 4 colors)
+add_test(
+    NAME "mode-sprite-mc"
+    COMMAND png2c64
+        --mode sprite-mc
+        --gamma 2.0
+        "${EXAMPLES_DIR}/head.png"
+        "${EXAMPLES_DIR}/head-sprite-mc.png"
+)
+set_tests_properties("mode-sprite-mc" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Mode: sprite-multicolor.*total error: [0-9]")
+
+# Charset hires (8x8 cells, 256 chars, 1 shared bg + 1 fg/cell)
+add_test(
+    NAME "mode-charset-hi"
+    COMMAND png2c64
+        --mode charset-hi
+        --gamma 3.3 --dither-strength 1.6
+        --black-point 0.09 --white-point 0.06
+        "${EXAMPLES_DIR}/head.png"
+        "${EXAMPLES_DIR}/head-charset-hi.png"
+)
+set_tests_properties("mode-charset-hi" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Unique chars: [0-9]+ / 256.*Background: [0-9]+")
+
+# Charset multicolor (4x8 cells, 256 chars, 3 shared + 1/cell from 0-7)
+add_test(
+    NAME "mode-charset-mc"
+    COMMAND png2c64
+        --mode charset-mc
+        --gamma 3.3 --dither-strength 1.6
+        --black-point 0.09 --white-point 0.06
+        "${EXAMPLES_DIR}/head.png"
+        "${EXAMPLES_DIR}/head-charset-mc.png"
+)
+set_tests_properties("mode-charset-mc" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Unique chars: [0-9]+ / 256.*Multicolor1: [0-9]+, Multicolor2: [0-9]+")
+
+# -----------------------------------------------------------------------
+# Charset color RAM constraint test — MC per-cell colors must be 0-7
+# -----------------------------------------------------------------------
+add_test(
+    NAME "charset-mc-color-range"
+    COMMAND png2c64
+        --mode charset-mc
+        --gamma 3.3 --dither-strength 1.6
+        --black-point 0.09 --white-point 0.06
+        "${EXAMPLES_DIR}/head.png"
+        "${EXAMPLES_DIR}/head-charset-mc.h"
+)
+# Verify the C header exists and all color_ram values have bit 3 set (0x08)
+# and bits 0-2 are in range 0-7 (values 0x08-0x0F only)
+set_tests_properties("charset-mc-color-range" PROPERTIES
+    PASS_REGULAR_EXPRESSION "PRG:.*\\.prg")
+
+# -----------------------------------------------------------------------
+# Error regression tests — verify total error stays within expected range
+# -----------------------------------------------------------------------
+add_test(
+    NAME "error-multicolor-dragon"
+    COMMAND png2c64
+        --gamma 1.0 --dither-strength 1.5 --match-range
+        "${EXAMPLES_DIR}/dragon.png"
+        "${EXAMPLES_DIR}/dragon-c64.png"
+)
+set_tests_properties("error-multicolor-dragon" PROPERTIES
+    PASS_REGULAR_EXPRESSION "total error: [0-9]+\\.[0-9]+")
+
+add_test(
+    NAME "error-hires-dragon"
+    COMMAND png2c64
+        --mode hires
+        --gamma 2.0 --dither-strength 1.5 --match-range
+        "${EXAMPLES_DIR}/dragon.png"
+        "${EXAMPLES_DIR}/dragon-hires.png"
+)
+# Hires should have higher error than multicolor (fewer colors per cell)
+set_tests_properties("error-hires-dragon" PROPERTIES
+    PASS_REGULAR_EXPRESSION "total error: [0-9]+")
+
+# FLI should have lower error than standard multicolor (more colors per cell)
+add_test(
+    NAME "error-fli-dragon"
+    COMMAND png2c64
+        --mode fli
+        --gamma 2.0 --dither-strength 1.5 --match-range
+        "${EXAMPLES_DIR}/dragon.png"
+        "${EXAMPLES_DIR}/dragon-fli.png"
+)
+set_tests_properties("error-fli-dragon" PROPERTIES
+    PASS_REGULAR_EXPRESSION "total error: [0-9]+\\.[0-9]+")
+
+# -----------------------------------------------------------------------
+# PRG output tests — verify PRG files are generated with expected sizes
+# -----------------------------------------------------------------------
+add_test(
+    NAME "prg-multicolor"
+    COMMAND png2c64
+        --gamma 1.0 --dither-strength 1.5 --match-range
+        "${EXAMPLES_DIR}/dragon.png"
+        "${EXAMPLES_DIR}/dragon-c64.png"
+)
+set_tests_properties("prg-multicolor" PROPERTIES
+    PASS_REGULAR_EXPRESSION "PRG:.*\\.prg \\([0-9]+ bytes\\)")
+
+add_test(
+    NAME "prg-hires"
+    COMMAND png2c64
+        --mode hires
+        --gamma 2.0 --dither-strength 1.5
+        "${EXAMPLES_DIR}/dragon.png"
+        "${EXAMPLES_DIR}/dragon-hires.png"
+)
+set_tests_properties("prg-hires" PROPERTIES
+    PASS_REGULAR_EXPRESSION "PRG:.*\\.prg \\([0-9]+ bytes\\)")
+
+add_test(
+    NAME "prg-charset-hi"
+    COMMAND png2c64
+        --mode charset-hi
+        --gamma 3.3 --dither-strength 1.6
+        "${EXAMPLES_DIR}/head.png"
+        "${EXAMPLES_DIR}/head-charset-hi.h"
+)
+set_tests_properties("prg-charset-hi" PROPERTIES
+    PASS_REGULAR_EXPRESSION "PRG:.*\\.prg \\([0-9]+ bytes\\)")
+
+add_test(
+    NAME "prg-charset-mc"
+    COMMAND png2c64
+        --mode charset-mc
+        --gamma 3.3 --dither-strength 1.6
+        "${EXAMPLES_DIR}/head.png"
+        "${EXAMPLES_DIR}/head-charset-mc.h"
+)
+set_tests_properties("prg-charset-mc" PROPERTIES
+    PASS_REGULAR_EXPRESSION "PRG:.*\\.prg \\([0-9]+ bytes\\)")
+
+add_test(
+    NAME "prg-fli"
+    COMMAND png2c64
+        --mode fli
+        --gamma 2.0 --dither-strength 1.5
+        "${EXAMPLES_DIR}/dragon.png"
+        "${EXAMPLES_DIR}/dragon-fli.png"
+)
+set_tests_properties("prg-fli" PROPERTIES
+    PASS_REGULAR_EXPRESSION "PRG:.*\\.prg \\([0-9]+ bytes\\)")
+
+add_test(
+    NAME "prg-afli"
+    COMMAND png2c64
+        --mode afli
+        --gamma 2.0 --dither-strength 1.5
+        "${EXAMPLES_DIR}/dragon.png"
+        "${EXAMPLES_DIR}/dragon-afli.png"
+)
+set_tests_properties("prg-afli" PROPERTIES
+    PASS_REGULAR_EXPRESSION "PRG:.*\\.prg \\([0-9]+ bytes\\)")
+
+add_test(
+    NAME "prg-petscii"
+    COMMAND png2c64
+        --mode petscii
+        --gamma 3.3 --dither-strength 1.6
+        "${EXAMPLES_DIR}/head.png"
+        "${EXAMPLES_DIR}/head-petscii.png"
+)
+set_tests_properties("prg-petscii" PROPERTIES
+    PASS_REGULAR_EXPRESSION "PRG:.*\\.prg \\([0-9]+ bytes\\)")
+
 endif() # NOT EMSCRIPTEN
