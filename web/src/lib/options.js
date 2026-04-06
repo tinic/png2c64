@@ -4,6 +4,7 @@ export const MODES = [
   { value: 'fli', label: 'FLI Multicolor (160x200)' },
   { value: 'afli', label: 'AFLI Hi-Res (320x200)' },
   { value: 'petscii', label: 'PETSCII (40x25 text)' },
+  { value: 'charset-mixed', label: 'Charset Mixed (Hi-Res+MC)' },
   { value: 'charset-mc', label: 'Charset Multicolor' },
   { value: 'charset-hi', label: 'Charset Hi-Res' },
   { value: 'sprite-mc', label: 'Sprite Multicolor' },
@@ -115,11 +116,11 @@ export function isSpriteMode(mode) {
 }
 
 export function hasPrgExport(mode) {
-  return mode === 'multicolor' || mode === 'hires' || mode === 'fli' || mode === 'afli' || mode === 'petscii' || mode === 'charset-hi' || mode === 'charset-mc'
+  return mode === 'multicolor' || mode === 'hires' || mode === 'fli' || mode === 'afli' || mode === 'petscii' || mode === 'charset-hi' || mode === 'charset-mc' || mode === 'charset-mixed'
 }
 
 export function isCharsetMode(mode) {
-  return mode === 'charset-hi' || mode === 'charset-mc'
+  return mode === 'charset-hi' || mode === 'charset-mc' || mode === 'charset-mixed'
 }
 
 const ERROR_DIFFUSION = new Set(['fs', 'atkinson', 'sierra', 'fs-wide', 'jarvis', 'line-fs'])

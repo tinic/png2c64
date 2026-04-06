@@ -425,8 +425,19 @@ Result<PrgData> charset_text(const charset::CharsetResult& result) {
     // Color RAM: pad to 1000 bytes
     // For multicolor text mode, bit 3 must be set to enable MC per character,
     // and bits 0-2 select the per-cell color (only colors 0-7).
-    for (auto c : result.color_ram)
-        image_data.push_back(result.multicolor ? ((c & 0x07) | 0x08) : (c & 0x0F));
+    // Mixed mode: per-cell decision — hires cells get full 4-bit color,
+    // MC cells get bit 3 set + 3-bit color.
+    for (std::size_t i = 0; i < result.color_ram.size(); ++i) {
+        auto c = result.color_ram[i];
+        if (result.mixed) {
+            if (result.cell_is_hires[i])
+                image_data.push_back(c & 0x0F);
+            else
+                image_data.push_back((c & 0x07) | 0x08);
+        } else {
+            image_data.push_back(result.multicolor ? ((c & 0x07) | 0x08) : (c & 0x0F));
+        }
+    }
     if (result.color_ram.size() < 1000)
         image_data.resize(image_data.size() + (1000 - result.color_ram.size()), 0);
 

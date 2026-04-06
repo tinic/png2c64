@@ -55,8 +55,15 @@ struct Config {
     std::size_t sprites_y = 1;
     bool charset = false;
     bool charset_mc = false;
+    bool charset_mixed = false;
     bool interactive = false;
     bool match_range = false;
+
+    charset::CharsetMode get_charset_mode() const {
+        if (charset_mixed) return charset::CharsetMode::mixed;
+        if (charset_mc) return charset::CharsetMode::multicolor;
+        return charset::CharsetMode::hires;
+    }
 };
 
 void print_usage() {
@@ -64,7 +71,7 @@ void print_usage() {
         "Usage: png2c64 [options] input.[png|jpg|bmp|tga] [output.png]\n"
         "\n"
         "Options:\n"
-        "  --mode hires|multicolor|fli|afli|petscii|sprite-hi|sprite-mc|charset-hi|charset-mc\n"
+        "  --mode hires|multicolor|fli|afli|petscii|sprite-hi|sprite-mc|charset-hi|charset-mc|charset-mixed\n"
         "                                  VIC-II mode (default: multicolor)\n"
         "  --palette <name>                Color palette (default: colodore)\n"
         "     pepto, vice, colodore, deekay, godot, c64wiki, levy\n"
@@ -135,8 +142,9 @@ Result<Config> parse_args(int argc, char* argv[]) {
                 else if (val == "petscii") config.mode = vic2::Mode::petscii;
                 else if (val == "sprite-hi") config.mode = vic2::Mode::sprite_hires;
                 else if (val == "sprite-mc") config.mode = vic2::Mode::sprite_multicolor;
-                else if (val == "charset-hi" || val == "charset-mc") {
+                else if (val == "charset-hi" || val == "charset-mc" || val == "charset-mixed") {
                     config.charset_mc = (val == "charset-mc");
+                    config.charset_mixed = (val == "charset-mixed");
                     config.charset = true;
                 }
                 else return std::unexpected{Error{ErrorCode::invalid_dimensions, "Unknown mode: " + std::string(val)}};
@@ -362,14 +370,14 @@ void run_pipeline_and_display(const Image& scaled_image,
 void run_charset_pipeline_and_display(const Image& scaled_image,
                                        const preprocess::Settings& pp,
                                        const Palette& pal,
-                                       bool multicolor,
+                                       charset::CharsetMode charset_mode,
                                        const dither::Settings& ds,
                                        bool match_range = true) {
     auto img = scaled_image;
     preprocess::apply(img, pp);
     if (match_range) preprocess::match_palette_range(img, pal);
 
-    auto result = charset::convert(img, pal, multicolor, ds);
+    auto result = charset::convert(img, pal, charset_mode, ds);
     if (!result) return;
 
     auto preview = charset::render(*result, pal);
@@ -519,7 +527,7 @@ void run_dither_gallery_bitmap(const Image& image,
 
 // Dither gallery for charset modes: re-runs charset convert per method
 void run_dither_gallery_charset(const Image& image, const Palette& pal,
-                                 bool multicolor,
+                                 charset::CharsetMode charset_mode,
                                  const dither::Settings& base_settings) {
     std::println("\n=== Dither Gallery ({} methods) ===\n",
                  dither_gallery.size());
@@ -528,7 +536,7 @@ void run_dither_gallery_charset(const Image& image, const Palette& pal,
         dither::Settings settings = base_settings;
         settings.method = method;
 
-        auto result = charset::convert(image, pal, multicolor, settings);
+        auto result = charset::convert(image, pal, charset_mode, settings);
         if (!result) continue;
 
         auto preview = charset::render(*result, pal);
@@ -556,7 +564,7 @@ void run_float_gallery(std::string_view title,
         std::println("--- {} ---", label);
         if (config.charset) {
             run_charset_pipeline_and_display(scaled_image, pp, pal,
-                                             config.charset_mc, ds, config.match_range);
+                                             config.get_charset_mode(), ds, config.match_range);
         } else {
             run_pipeline_and_display(scaled_image, pp, pal, config.mode,
                                      params, ds, config.match_range);
@@ -576,7 +584,7 @@ bool run_gallery(const std::string& gallery_name,
         if (config.charset) {
             if (preprocessed_image) {
                 run_dither_gallery_charset(*preprocessed_image, pal,
-                                           config.charset_mc,
+                                           config.get_charset_mode(),
                                            config.dither_settings);
             }
         } else if (preprocessed_image && screen) {
@@ -724,7 +732,7 @@ void run_interactive(const Image& scaled_image, Config& config,
     auto& pp = config.preprocess;
     auto& ds = config.dither_settings;
     bool is_charset = config.charset;
-    bool is_charset_mc = config.charset_mc;
+    auto charset_mode = config.get_charset_mode();
 
     RawTerminal term;
     std::print("\033[2J"); // clear once on entry
@@ -742,7 +750,7 @@ void run_interactive(const Image& scaled_image, Config& config,
 
         Image output;
         if (is_charset) {
-            auto result = charset::convert(img, pal, is_charset_mc, ds);
+            auto result = charset::convert(img, pal, charset_mode, ds);
             if (!result) return;
             output = charset::render(*result, pal);
         } else {
@@ -880,7 +888,7 @@ void run_interactive(const Image& scaled_image, Config& config,
                 preprocess::apply(img, pp);
                 if (config.match_range) preprocess::match_palette_range(img, pal);
                 if (is_charset) {
-                    auto result = charset::convert(img, pal, is_charset_mc, ds);
+                    auto result = charset::convert(img, pal, charset_mode, ds);
                     if (result) {
                         // Derive C identifier from path
                         auto stem = config.output_path;
@@ -953,8 +961,8 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // For multicolor, scale input width /2 to get logical resolution
-        if (config->charset_mc) {
+        // For pure multicolor (not mixed), scale input width /2 to get logical resolution
+        if (config->charset_mc && !config->charset_mixed) {
             auto logical_w = image->width() / 2;
             std::println("Scaling to logical {}x{} for multicolor...",
                          logical_w, image->height());
@@ -998,9 +1006,11 @@ int main(int argc, char* argv[]) {
         }
 
         // Convert
-        auto mode_label = config->charset_mc ? "multicolor" : "hires";
+        auto cmode = config->get_charset_mode();
+        auto mode_label = config->charset_mixed ? "mixed hires/multicolor"
+                        : config->charset_mc ? "multicolor" : "hires";
         std::println("Converting to {} charset...", mode_label);
-        auto result = charset::convert(*image, pal, config->charset_mc,
+        auto result = charset::convert(*image, pal, cmode,
                                        config->dither_settings);
         if (!result) {
             std::println(stderr, "Error: {}", result.error().message);
@@ -1016,9 +1026,13 @@ int main(int argc, char* argv[]) {
                          result->unique_before_merge);
         }
         std::println("  Background: {}", result->background);
-        if (config->charset_mc) {
+        if (config->charset_mc || config->charset_mixed) {
             std::println("  Multicolor1: {}, Multicolor2: {}",
                          result->mc1, result->mc2);
+        }
+        if (config->charset_mixed) {
+            std::println("  Hires cells: {}, MC cells: {}",
+                         result->hires_cells, result->mc_cells);
         }
 
         // Terminal preview

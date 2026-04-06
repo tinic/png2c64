@@ -55,7 +55,13 @@ dither::Method parse_dither(const std::string& s) {
 }
 
 bool is_charset_mode(const std::string& mode) {
-    return mode == "charset-hi" || mode == "charset-mc";
+    return mode == "charset-hi" || mode == "charset-mc" || mode == "charset-mixed";
+}
+
+charset::CharsetMode get_charset_mode(const std::string& mode) {
+    if (mode == "charset-mixed") return charset::CharsetMode::mixed;
+    if (mode == "charset-mc") return charset::CharsetMode::multicolor;
+    return charset::CharsetMode::hires;
 }
 
 struct PipelineResult {
@@ -126,7 +132,8 @@ dither::Settings make_dither_settings(const Options& options) {
 Result<Image> run_charset_pipeline(const std::uint8_t* input_data,
                                     std::size_t input_size,
                                     const Options& options) {
-    bool mc = (options.mode == "charset-mc");
+    auto cmode = get_charset_mode(options.mode);
+    bool mc_halve = (options.mode == "charset-mc"); // only pure MC halves width
 
     // Determine target dimensions
     auto target_w = options.width > 0
@@ -138,8 +145,8 @@ Result<Image> run_charset_pipeline(const std::uint8_t* input_data,
                                       target_w, target_h);
     if (!image) return std::unexpected{image.error()};
 
-    // For multicolor charset, scale width /2 for logical resolution
-    if (mc) {
+    // For pure multicolor charset, scale width /2 for logical resolution
+    if (mc_halve) {
         auto logical_w = image->width() / 2;
         auto scaled = scale::bicubic(*image, logical_w, image->height());
         if (!scaled) return std::unexpected{scaled.error()};
@@ -150,7 +157,7 @@ Result<Image> run_charset_pipeline(const std::uint8_t* input_data,
     if (pal.colors.empty()) pal = palette::by_name("colodore");
 
     auto ds = make_dither_settings(options);
-    auto result = charset::convert(*image, pal, mc, ds);
+    auto result = charset::convert(*image, pal, cmode, ds);
     if (!result) return std::unexpected{result.error()};
 
     return charset::render(*result, pal);
@@ -297,7 +304,8 @@ ConvertResult convert_prg(const std::uint8_t* input_data,
                           std::size_t input_size,
                           const Options& options) {
     if (is_charset_mode(options.mode)) {
-        bool mc = (options.mode == "charset-mc");
+        auto cmode = get_charset_mode(options.mode);
+        bool mc_halve = (options.mode == "charset-mc");
 
         auto target_w = options.width > 0
             ? static_cast<std::size_t>(options.width) : std::size_t{320};
@@ -308,7 +316,7 @@ ConvertResult convert_prg(const std::uint8_t* input_data,
                                           target_w, target_h);
         if (!image) return {{}, 0, 0, image.error().message};
 
-        if (mc) {
+        if (mc_halve) {
             auto logical_w = image->width() / 2;
             auto scaled = scale::bicubic(*image, logical_w, image->height());
             if (!scaled) return {{}, 0, 0, scaled.error().message};
@@ -319,7 +327,7 @@ ConvertResult convert_prg(const std::uint8_t* input_data,
         if (pal.colors.empty()) pal = palette::by_name("colodore");
 
         auto ds = make_dither_settings(options);
-        auto result = charset::convert(*image, pal, mc, ds);
+        auto result = charset::convert(*image, pal, cmode, ds);
         if (!result) return {{}, 0, 0, result.error().message};
 
         auto prg_data = prg::charset_text(*result);
@@ -475,7 +483,8 @@ ConvertResult convert_header(const std::uint8_t* input_data,
         return {{}, 0, 0, "Header export only for charset, sprite, and PETSCII modes"};
 
     if (is_charset) {
-        bool mc = (options.mode == "charset-mc");
+        auto cmode = get_charset_mode(options.mode);
+        bool mc_halve = (options.mode == "charset-mc");
 
         auto target_w = options.width > 0
             ? static_cast<std::size_t>(options.width) : std::size_t{320};
@@ -486,7 +495,7 @@ ConvertResult convert_header(const std::uint8_t* input_data,
                                           target_w, target_h);
         if (!image) return {{}, 0, 0, image.error().message};
 
-        if (mc) {
+        if (mc_halve) {
             auto logical_w = image->width() / 2;
             auto scaled = scale::bicubic(*image, logical_w, image->height());
             if (!scaled) return {{}, 0, 0, scaled.error().message};
@@ -497,7 +506,7 @@ ConvertResult convert_header(const std::uint8_t* input_data,
         if (pal.colors.empty()) pal = palette::by_name("colodore");
 
         auto ds = make_dither_settings(options);
-        auto result = charset::convert(*image, pal, mc, ds);
+        auto result = charset::convert(*image, pal, cmode, ds);
         if (!result) return {{}, 0, 0, result.error().message};
 
         auto header_text = charset::generate_header(*result, name);

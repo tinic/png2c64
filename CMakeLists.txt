@@ -338,6 +338,30 @@ add_test(
 set_tests_properties("prg-afli" PROPERTIES
     PASS_REGULAR_EXPRESSION "PRG:.*\\.prg \\([0-9]+ bytes\\)")
 
+# Charset mixed (per-cell hires/multicolor)
+add_test(
+    NAME "mode-charset-mixed"
+    COMMAND png2c64
+        --mode charset-mixed
+        --gamma 3.3 --dither-strength 1.6
+        --black-point 0.09 --white-point 0.06
+        "${EXAMPLES_DIR}/head.png"
+        "${EXAMPLES_DIR}/head-charset-mixed.png"
+)
+set_tests_properties("mode-charset-mixed" PROPERTIES
+    PASS_REGULAR_EXPRESSION "Unique chars: [0-9]+ / 256.*Hires cells: [0-9]+, MC cells: [0-9]+")
+
+add_test(
+    NAME "prg-charset-mixed"
+    COMMAND png2c64
+        --mode charset-mixed
+        --gamma 3.3 --dither-strength 1.6
+        "${EXAMPLES_DIR}/head.png"
+        "${EXAMPLES_DIR}/head-charset-mixed.h"
+)
+set_tests_properties("prg-charset-mixed" PROPERTIES
+    PASS_REGULAR_EXPRESSION "PRG:.*\\.prg")
+
 add_test(
     NAME "prg-petscii"
     COMMAND png2c64

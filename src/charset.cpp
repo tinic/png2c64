@@ -315,13 +315,256 @@ McColorSelection select_colors_multicolor(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3: Encode dithered pixel assignments into 8-byte patterns
+// Cell quantization result (shared by all modes)
 // ---------------------------------------------------------------------------
 
 struct CellQuant {
     Pattern pattern{};
     std::uint8_t color_ram{};
+    bool is_hires{};
 };
+
+// ---------------------------------------------------------------------------
+// Mixed mode: per-cell hires/multicolor decision
+// Input is full 320-wide resolution. MC cells average pixel pairs.
+// ---------------------------------------------------------------------------
+
+struct MixedColorSelection {
+    quantize::ScreenResult screen;
+    std::uint8_t bg{}, mc1{}, mc2{};
+    std::vector<bool> cell_is_hires;
+};
+
+MixedColorSelection select_colors_mixed(
+    const Image& image, const Palette& palette,
+    std::size_t cols, std::size_t rows) {
+
+    auto n = static_cast<std::uint8_t>(palette.size());
+    auto pal_lab = precompute_lab(palette);
+    auto num_cells = cols * rows;
+
+    // Precompute cell pixels in OKLab — both hires (8x8) and MC (4x8, averaged pairs)
+    std::vector<std::vector<OKLab>> cells_hi(num_cells);
+    std::vector<std::vector<OKLab>> cells_mc(num_cells);
+    for (std::size_t cy = 0; cy < rows; ++cy)
+        for (std::size_t cx = 0; cx < cols; ++cx) {
+            auto ci = cy * cols + cx;
+            cells_hi[ci].reserve(64);
+            cells_mc[ci].reserve(32);
+            for (std::size_t dy = 0; dy < 8; ++dy) {
+                for (std::size_t dx = 0; dx < 8; ++dx)
+                    cells_hi[ci].push_back(
+                        color_space::linear_to_oklab(
+                            image[cx * 8 + dx, cy * 8 + dy]));
+                // MC pixels: average pairs of horizontal pixels in linear space
+                for (std::size_t dx = 0; dx < 4; ++dx) {
+                    auto p0 = image[cx * 8 + dx * 2, cy * 8 + dy];
+                    auto p1 = image[cx * 8 + dx * 2 + 1, cy * 8 + dy];
+                    Color3f avg{(p0.r + p1.r) * 0.5f,
+                                (p0.g + p1.g) * 0.5f,
+                                (p0.b + p1.b) * 0.5f};
+                    cells_mc[ci].push_back(color_space::linear_to_oklab(avg));
+                }
+            }
+        }
+
+    // Try all C(16,3) triples for shared colors
+    struct TripleResult {
+        std::uint8_t c0, c1, c2;
+        float total_error;
+        std::vector<std::uint8_t> per_cell; // fg (hires) or per-cell color (mc)
+        std::vector<bool> is_hires;
+    };
+
+    std::vector<TripleResult> candidates;
+    candidates.reserve(560);
+    for (std::uint8_t i = 0; i < n; ++i)
+        for (std::uint8_t j = i + 1; j < n; ++j)
+            for (std::uint8_t k = j + 1; k < n; ++k)
+                candidates.push_back({i, j, k, 0.0f, {}, {}});
+
+    std::atomic<std::size_t> next{0};
+    auto worker = [&] {
+        while (true) {
+            auto ti = next.fetch_add(1, std::memory_order_relaxed);
+            if (ti >= candidates.size()) break;
+            auto& cand = candidates[ti];
+            cand.per_cell.resize(num_cells);
+            cand.is_hires.resize(num_cells);
+            cand.total_error = 0.0f;
+
+            for (std::size_t ci = 0; ci < num_cells; ++ci) {
+                // Try MC: best per-cell color from 0-7
+                float best_mc_err = std::numeric_limits<float>::max();
+                std::uint8_t best_mc_pc = 0;
+                for (std::uint8_t pc = 0; pc < 8; ++pc) {
+                    if (pc == cand.c0 || pc == cand.c1 || pc == cand.c2) continue;
+                    std::array<std::uint8_t, 4> colors = {cand.c0, cand.c1, cand.c2, pc};
+                    float err = 0.0f;
+                    for (auto& px : cells_mc[ci]) {
+                        float best = std::numeric_limits<float>::max();
+                        for (auto c : colors) {
+                            auto& cl = pal_lab[c];
+                            float d = (px.L-cl.L)*(px.L-cl.L) + (px.a-cl.a)*(px.a-cl.a) + (px.b-cl.b)*(px.b-cl.b);
+                            if (d < best) best = d;
+                        }
+                        err += best;
+                    }
+                    if (err < best_mc_err) { best_mc_err = err; best_mc_pc = pc; }
+                }
+
+                // Try hires: best fg from all 16, using c0 as bg candidate
+                // For each triple ordering, c0 is always the bg candidate
+                auto bg_cand = cand.c0; // will be reassigned later
+                float best_hi_err = std::numeric_limits<float>::max();
+                std::uint8_t best_hi_fg = 0;
+                for (std::uint8_t fg = 0; fg < n; ++fg) {
+                    if (fg == bg_cand) continue;
+                    float err = 0.0f;
+                    for (auto& px : cells_hi[ci]) {
+                        auto& bl = pal_lab[bg_cand];
+                        auto& fl = pal_lab[fg];
+                        float db = (px.L-bl.L)*(px.L-bl.L) + (px.a-bl.a)*(px.a-bl.a) + (px.b-bl.b)*(px.b-bl.b);
+                        float df = (px.L-fl.L)*(px.L-fl.L) + (px.a-fl.a)*(px.a-fl.a) + (px.b-fl.b)*(px.b-fl.b);
+                        err += std::min(db, df);
+                    }
+                    if (err < best_hi_err) { best_hi_err = err; best_hi_fg = fg; }
+                }
+
+                // Pick whichever has lower error
+                if (best_hi_err <= best_mc_err) {
+                    cand.is_hires[ci] = true;
+                    cand.per_cell[ci] = best_hi_fg;
+                    cand.total_error += best_hi_err;
+                } else {
+                    cand.is_hires[ci] = false;
+                    cand.per_cell[ci] = best_mc_pc;
+                    cand.total_error += best_mc_err;
+                }
+            }
+        }
+    };
+
+    {
+        auto nt = std::min(static_cast<std::size_t>(hw_threads()), candidates.size());
+        std::vector<std::jthread> threads;
+        threads.reserve(nt - 1);
+        for (std::size_t t = 1; t < nt; ++t) threads.emplace_back(worker);
+        worker();
+    }
+
+    auto best_it = std::ranges::min_element(candidates, {}, &TripleResult::total_error);
+
+    // Assign bg = most common shared color (same as MC path)
+    std::array<std::uint8_t, 3> shared = {best_it->c0, best_it->c1, best_it->c2};
+    std::array<std::size_t, 3> counts{};
+    for (std::size_t ci = 0; ci < num_cells; ++ci) {
+        if (best_it->is_hires[ci]) continue; // only count MC cells for bg selection
+        for (auto& px : cells_mc[ci]) {
+            int nearest = 0;
+            float bd = std::numeric_limits<float>::max();
+            for (int s = 0; s < 3; ++s) {
+                auto& c = pal_lab[shared[static_cast<std::size_t>(s)]];
+                float d = (px.L-c.L)*(px.L-c.L) + (px.a-c.a)*(px.a-c.a) + (px.b-c.b)*(px.b-c.b);
+                if (d < bd) { bd = d; nearest = s; }
+            }
+            ++counts[static_cast<std::size_t>(nearest)];
+        }
+    }
+
+    std::array<std::size_t, 3> order = {0, 1, 2};
+    std::ranges::sort(order, [&](auto a, auto b) { return counts[a] > counts[b]; });
+
+    auto bg_color  = shared[order[0]];
+    auto mc1_color = shared[order[1]];
+    auto mc2_color = shared[order[2]];
+
+    // Build ScreenResult with per-cell modes
+    quantize::ScreenResult screen;
+    screen.mode = vic2::Mode::multicolor; // VIC-II is in MC text mode
+    screen.background_color = bg_color;
+    screen.cells.resize(num_cells);
+
+    std::vector<bool> cell_is_hires(num_cells);
+
+    for (std::size_t ci = 0; ci < num_cells; ++ci) {
+        auto& cell = screen.cells[ci];
+        auto is_hi = best_it->is_hires[ci];
+        cell_is_hires[ci] = is_hi;
+
+        if (is_hi) {
+            auto fg = best_it->per_cell[ci];
+            cell.cell_colors = {bg_color, fg};
+            cell.pixel_indices.resize(64);
+            auto& bg_l = pal_lab[bg_color];
+            auto& fg_l = pal_lab[fg];
+            for (std::size_t pi = 0; pi < 64; ++pi) {
+                auto& px = cells_hi[ci][pi];
+                float db = (px.L-bg_l.L)*(px.L-bg_l.L) + (px.a-bg_l.a)*(px.a-bg_l.a) + (px.b-bg_l.b)*(px.b-bg_l.b);
+                float df = (px.L-fg_l.L)*(px.L-fg_l.L) + (px.a-fg_l.a)*(px.a-fg_l.a) + (px.b-fg_l.b)*(px.b-fg_l.b);
+                cell.pixel_indices[pi] = (df < db) ? 1 : 0;
+            }
+        } else {
+            auto pc = best_it->per_cell[ci];
+            cell.cell_colors = {bg_color, mc1_color, mc2_color, pc};
+            cell.pixel_indices.resize(32);
+            for (std::size_t pi = 0; pi < 32; ++pi) {
+                auto& px = cells_mc[ci][pi];
+                float best_d = std::numeric_limits<float>::max();
+                std::uint8_t best_idx = 0;
+                for (std::uint8_t c = 0; c < 4; ++c) {
+                    auto& cl = pal_lab[cell.cell_colors[c]];
+                    float d = (px.L-cl.L)*(px.L-cl.L) + (px.a-cl.a)*(px.a-cl.a) + (px.b-cl.b)*(px.b-cl.b);
+                    if (d < best_d) { best_d = d; best_idx = c; }
+                }
+                cell.pixel_indices[pi] = best_idx;
+            }
+        }
+    }
+
+    return {std::move(screen), bg_color, mc1_color, mc2_color, std::move(cell_is_hires)};
+}
+
+// Encode mixed-mode patterns from a ScreenResult with per-cell modes
+std::vector<CellQuant> encode_patterns_mixed(
+    const quantize::ScreenResult& screen, std::size_t num_cells,
+    const std::vector<bool>& cell_is_hires) {
+
+    std::vector<CellQuant> cells(num_cells);
+    for (std::size_t ci = 0; ci < num_cells; ++ci) {
+        auto& cell = screen.cells[ci];
+        cells[ci].is_hires = cell_is_hires[ci];
+
+        if (cell_is_hires[ci]) {
+            cells[ci].color_ram = cell.cell_colors[1]; // fg
+            for (std::size_t row = 0; row < 8; ++row) {
+                std::uint8_t byte = 0;
+                for (std::size_t col = 0; col < 8; ++col) {
+                    auto pi = row * 8 + col;
+                    if (cell.pixel_indices[pi] == 1)
+                        byte |= static_cast<std::uint8_t>(0x80 >> col);
+                }
+                cells[ci].pattern[row] = byte;
+            }
+        } else {
+            cells[ci].color_ram = cell.cell_colors[3]; // per-cell MC color
+            for (std::size_t row = 0; row < 8; ++row) {
+                std::uint8_t byte = 0;
+                for (std::size_t col = 0; col < 4; ++col) {
+                    auto pi = row * 4 + col;
+                    auto bits = cell.pixel_indices[pi];
+                    byte |= static_cast<std::uint8_t>(bits << (6 - col * 2));
+                }
+                cells[ci].pattern[row] = byte;
+            }
+        }
+    }
+    return cells;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Encode dithered pixel assignments into 8-byte patterns
+// ---------------------------------------------------------------------------
 
 std::vector<CellQuant> encode_patterns_hires(
     const quantize::ScreenResult& screen, std::size_t num_cells) {
@@ -329,8 +572,8 @@ std::vector<CellQuant> encode_patterns_hires(
     std::vector<CellQuant> cells(num_cells);
     for (std::size_t ci = 0; ci < num_cells; ++ci) {
         auto& cell = screen.cells[ci];
-        // color_ram = foreground = cell_colors[1]
         cells[ci].color_ram = cell.cell_colors[1];
+        cells[ci].is_hires = true;
 
         for (std::size_t row = 0; row < 8; ++row) {
             std::uint8_t byte = 0;
@@ -351,8 +594,8 @@ std::vector<CellQuant> encode_patterns_multicolor(
     std::vector<CellQuant> cells(num_cells);
     for (std::size_t ci = 0; ci < num_cells; ++ci) {
         auto& cell = screen.cells[ci];
-        // color_ram = per-cell color = cell_colors[3]
         cells[ci].color_ram = cell.cell_colors[3];
+        cells[ci].is_hires = false;
 
         for (std::size_t row = 0; row < 8; ++row) {
             std::uint8_t byte = 0;
@@ -373,6 +616,7 @@ std::vector<CellQuant> encode_patterns_multicolor(
 
 struct CharEntry {
     Pattern pattern;
+    bool is_hires{};
     std::vector<std::size_t> cell_indices;
     bool alive = true;
 };
@@ -386,13 +630,17 @@ DeduplicatedCharset deduplicate(const std::vector<CellQuant>& cells) {
     DeduplicatedCharset result;
     result.cell_to_entry.resize(cells.size());
 
-    std::map<Pattern, std::size_t> pattern_map;
+    using PatternKey = std::pair<Pattern, bool>;
+    std::map<PatternKey, std::size_t> pattern_map;
     for (std::size_t ci = 0; ci < cells.size(); ++ci) {
-        auto& pat = cells[ci].pattern;
-        auto [it, inserted] = pattern_map.try_emplace(pat, result.entries.size());
-        if (inserted)
-            result.entries.push_back({pat, {ci}, true});
-        else
+        PatternKey key{cells[ci].pattern, cells[ci].is_hires};
+        auto [it, inserted] = pattern_map.try_emplace(key, result.entries.size());
+        if (inserted) {
+            auto& e = result.entries.emplace_back();
+            e.pattern = cells[ci].pattern;
+            e.is_hires = cells[ci].is_hires;
+            e.cell_indices.push_back(ci);
+        } else
             result.entries[it->second].cell_indices.push_back(ci);
         result.cell_to_entry[ci] = it->second;
     }
@@ -400,7 +648,7 @@ DeduplicatedCharset deduplicate(const std::vector<CellQuant>& cells) {
     return result;
 }
 
-// dist_func: callable(const Pattern&, const Pattern&) -> float
+// dist_func: callable(std::size_t entry_a, std::size_t entry_b) -> float
 void merge_to_256(DeduplicatedCharset& dedup, auto dist_func) {
     std::vector<std::size_t> alive;
     for (std::size_t i = 0; i < dedup.entries.size(); ++i)
@@ -428,8 +676,7 @@ void merge_to_256(DeduplicatedCharset& dedup, auto dist_func) {
             for (std::size_t col = row + 1; col < alive.size(); ++col) {
                 auto bi = alive[col];
                 pairs[base + (col - row - 1)] = {ai, bi,
-                    dist_func(dedup.entries[ai].pattern,
-                              dedup.entries[bi].pattern)};
+                    dist_func(ai, bi)};
             }
         }
     };
@@ -697,6 +944,197 @@ void refine_charset(
     log_println("");
 }
 
+// ---------------------------------------------------------------------------
+// Mixed-mode refinement: cells only assigned to patterns of matching mode
+// ---------------------------------------------------------------------------
+
+void refine_charset_mixed(
+    const Image& image, const Palette& palette,
+    std::uint8_t bg, std::uint8_t mc1, std::uint8_t mc2,
+    std::size_t cols, std::size_t rows,
+    std::array<Pattern, 256>& patterns,
+    std::array<bool, 256>& pattern_is_hires,
+    std::vector<std::uint8_t>& assignments,
+    std::vector<std::uint8_t>& color_ram,
+    const std::vector<bool>& cell_is_hires,
+    int max_iters, bool recompute_centroids) {
+
+    auto pal_lab = precompute_lab(palette);
+    auto n_pal = static_cast<std::uint8_t>(palette.size());
+    auto num_cells = cols * rows;
+
+    // Precompute cell pixels: hires=64 OKLab values, MC=32 (averaged pairs)
+    std::vector<std::vector<OKLab>> cells_lab(num_cells);
+    for (std::size_t cy = 0; cy < rows; ++cy)
+        for (std::size_t cx = 0; cx < cols; ++cx) {
+            auto ci = cy * cols + cx;
+            if (cell_is_hires[ci]) {
+                cells_lab[ci].reserve(64);
+                for (std::size_t dy = 0; dy < 8; ++dy)
+                    for (std::size_t dx = 0; dx < 8; ++dx)
+                        cells_lab[ci].push_back(color_space::linear_to_oklab(
+                            image[cx * 8 + dx, cy * 8 + dy]));
+            } else {
+                cells_lab[ci].reserve(32);
+                for (std::size_t dy = 0; dy < 8; ++dy)
+                    for (std::size_t dx = 0; dx < 4; ++dx) {
+                        auto p0 = image[cx * 8 + dx * 2, cy * 8 + dy];
+                        auto p1 = image[cx * 8 + dx * 2 + 1, cy * 8 + dy];
+                        Color3f avg{(p0.r + p1.r) * 0.5f,
+                                    (p0.g + p1.g) * 0.5f,
+                                    (p0.b + p1.b) * 0.5f};
+                        cells_lab[ci].push_back(color_space::linear_to_oklab(avg));
+                    }
+            }
+        }
+
+    for (int iter = 0; iter < max_iters; ++iter) {
+        std::size_t changes = 0;
+
+        // Step 1: Reassign each cell to best pattern of matching mode
+        std::atomic<std::size_t> next_cell{0};
+        std::atomic<std::size_t> atomic_changes{0};
+
+        auto assign_worker = [&] {
+            while (true) {
+                auto ci = next_cell.fetch_add(1, std::memory_order_relaxed);
+                if (ci >= num_cells) break;
+
+                bool is_hi = cell_is_hires[ci];
+                auto current_pc = color_ram[ci];
+                float best_err = cell_pattern_error(
+                    cells_lab[ci], patterns[assignments[ci]], pal_lab,
+                    !is_hi, bg, mc1, mc2, current_pc);
+                auto best_pat = assignments[ci];
+
+                for (std::size_t p = 0; p < 256; ++p) {
+                    if (p == assignments[ci]) continue;
+                    if (pattern_is_hires[p] != is_hi) continue; // mode must match
+                    float err = cell_pattern_error(
+                        cells_lab[ci], patterns[p], pal_lab,
+                        !is_hi, bg, mc1, mc2, current_pc);
+                    if (err < best_err) {
+                        best_err = err;
+                        best_pat = static_cast<std::uint8_t>(p);
+                    }
+                }
+
+                if (best_pat != assignments[ci]) {
+                    assignments[ci] = best_pat;
+                    atomic_changes.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        };
+
+        next_cell = 0;
+        {
+            auto nt = std::min(static_cast<std::size_t>(hw_threads()), num_cells);
+            std::vector<std::jthread> threads;
+            threads.reserve(nt - 1);
+            for (std::size_t t = 1; t < nt; ++t) threads.emplace_back(assign_worker);
+            assign_worker();
+        }
+        changes = atomic_changes.load();
+
+        // Step 2: Re-optimize per-cell color
+        for (std::size_t ci = 0; ci < num_cells; ++ci) {
+            float best_err = std::numeric_limits<float>::max();
+            std::uint8_t best_pc = color_ram[ci];
+            bool is_hi = cell_is_hires[ci];
+
+            auto pc_limit = is_hi ? n_pal : std::uint8_t{8};
+            for (std::uint8_t pc = 0; pc < pc_limit; ++pc) {
+                if (is_hi && pc == bg) continue;
+                if (!is_hi && (pc == bg || pc == mc1 || pc == mc2)) continue;
+
+                float err = cell_pattern_error(
+                    cells_lab[ci], patterns[assignments[ci]], pal_lab,
+                    !is_hi, bg, mc1, mc2, pc);
+                if (err < best_err) { best_err = err; best_pc = pc; }
+            }
+
+            if (best_pc != color_ram[ci]) {
+                color_ram[ci] = best_pc;
+                ++changes;
+            }
+        }
+
+        // Step 3: Recompute centroids (when enabled)
+        if (recompute_centroids) {
+            std::array<std::vector<std::size_t>, 256> pat_cells;
+            for (std::size_t ci = 0; ci < num_cells; ++ci)
+                pat_cells[assignments[ci]].push_back(ci);
+
+            for (std::size_t p = 0; p < 256; ++p) {
+                if (pat_cells[p].empty()) continue;
+
+                Pattern new_pat{};
+                if (!pattern_is_hires[p]) {
+                    // MC centroid
+                    for (std::size_t row = 0; row < 8; ++row) {
+                        std::uint8_t byte = 0;
+                        for (std::size_t col = 0; col < 4; ++col) {
+                            auto pi = row * 4 + col;
+                            float best_bit_err = std::numeric_limits<float>::max();
+                            std::uint8_t best_bits = 0;
+                            for (std::uint8_t bits = 0; bits < 4; ++bits) {
+                                float total = 0.0f;
+                                for (auto ci : pat_cells[p]) {
+                                    std::array<std::uint8_t, 4> pal_indices = {
+                                        bg, mc1, mc2, color_ram[ci]};
+                                    auto& c = pal_lab[pal_indices[bits]];
+                                    auto& px = cells_lab[ci][pi];
+                                    float dL = px.L-c.L, da = px.a-c.a, db = px.b-c.b;
+                                    total += dL*dL + da*da + db*db;
+                                }
+                                if (total < best_bit_err) {
+                                    best_bit_err = total;
+                                    best_bits = bits;
+                                }
+                            }
+                            byte |= static_cast<std::uint8_t>(
+                                best_bits << (6 - col * 2));
+                        }
+                        new_pat[row] = byte;
+                    }
+                } else {
+                    // Hires centroid
+                    for (std::size_t row = 0; row < 8; ++row) {
+                        std::uint8_t byte = 0;
+                        for (std::size_t col = 0; col < 8; ++col) {
+                            auto pi = row * 8 + col;
+                            float err_bg = 0.0f, err_fg = 0.0f;
+                            for (auto ci : pat_cells[p]) {
+                                auto& px = cells_lab[ci][pi];
+                                auto& bl = pal_lab[bg];
+                                auto& fl = pal_lab[color_ram[ci]];
+                                float dL, da, db;
+                                dL = px.L-bl.L; da = px.a-bl.a; db = px.b-bl.b;
+                                err_bg += dL*dL + da*da + db*db;
+                                dL = px.L-fl.L; da = px.a-fl.a; db = px.b-fl.b;
+                                err_fg += dL*dL + da*da + db*db;
+                            }
+                            if (err_fg < err_bg)
+                                byte |= static_cast<std::uint8_t>(0x80 >> col);
+                        }
+                        new_pat[row] = byte;
+                    }
+                }
+
+                if (new_pat != patterns[p]) {
+                    patterns[p] = new_pat;
+                    ++changes;
+                }
+            }
+        }
+
+        log_print("\r  Refine iter {}: {} changes", iter + 1, changes);
+        log_flush();
+        if (changes == 0) break;
+    }
+    log_println("");
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -704,9 +1142,12 @@ void refine_charset(
 // ---------------------------------------------------------------------------
 
 Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
-                              bool multicolor,
+                              CharsetMode mode,
                               const dither::Settings& dither_settings) {
-    std::size_t cell_w = multicolor ? 4 : 8;
+    bool multicolor = (mode == CharsetMode::multicolor);
+    bool mixed = (mode == CharsetMode::mixed);
+    // Mixed mode uses full 8-pixel-wide cells (like hires)
+    std::size_t cell_w = (multicolor && !mixed) ? 4 : 8;
     std::size_t cell_h = 8;
 
     if (image_in.width() % cell_w != 0) {
@@ -744,8 +1185,14 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
     // Phase 1: Select colors (shared + per-cell)
     std::uint8_t bg{}, mc1{}, mc2{};
     quantize::ScreenResult screen;
+    std::vector<bool> cell_is_hires;
 
-    if (multicolor) {
+    if (mixed) {
+        auto sel = select_colors_mixed(image, palette, cols, rows);
+        screen = std::move(sel.screen);
+        bg = sel.bg; mc1 = sel.mc1; mc2 = sel.mc2;
+        cell_is_hires = std::move(sel.cell_is_hires);
+    } else if (multicolor) {
         auto sel = select_colors_multicolor(image, palette, cols, rows);
         screen = std::move(sel.screen);
         bg = sel.bg; mc1 = sel.mc1; mc2 = sel.mc2;
@@ -755,21 +1202,71 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
     }
 
     // Phase 2: Apply dithering
-    vic2::ModeParams params;
-    if (multicolor) {
-        params = {cols * 4, rows * 8, 4, 8, 4, true};
-    } else {
-        params = {cols * 8, rows * 8, 8, 8, 2, false};
-    }
-
     if (dither_settings.method != dither::Method::none) {
         log_println("  Dithering...");
-        dither::apply(image, screen, palette, params, dither_settings);
+        if (mixed) {
+            // Mixed mode: dither hires and MC cells in separate passes
+            // Build a half-width image for MC cells (average pixel pairs)
+            Image mc_image(cols * 4, rows * 8);
+            for (std::size_t y = 0; y < rows * 8; ++y)
+                for (std::size_t x = 0; x < cols * 4; ++x) {
+                    auto p0 = image[x * 2, y];
+                    auto p1 = image[x * 2 + 1, y];
+                    mc_image[x, y] = {(p0.r + p1.r) * 0.5f,
+                                      (p0.g + p1.g) * 0.5f,
+                                      (p0.b + p1.b) * 0.5f};
+                }
+
+            // Build separate ScreenResults for each mode
+            quantize::ScreenResult hi_screen, mc_screen;
+            hi_screen.mode = vic2::Mode::hires;
+            hi_screen.background_color = bg;
+            hi_screen.cells.resize(num_cells);
+            mc_screen.mode = vic2::Mode::multicolor;
+            mc_screen.background_color = bg;
+            mc_screen.cells.resize(num_cells);
+
+            for (std::size_t ci = 0; ci < num_cells; ++ci) {
+                if (cell_is_hires[ci]) {
+                    hi_screen.cells[ci] = screen.cells[ci];
+                    // Dummy MC cell so dither doesn't crash on empty data
+                    mc_screen.cells[ci].cell_colors = {bg, mc1, mc2, 0};
+                    mc_screen.cells[ci].pixel_indices.resize(32, 0);
+                } else {
+                    mc_screen.cells[ci] = screen.cells[ci];
+                    // Dummy hires cell
+                    hi_screen.cells[ci].cell_colors = {bg, 0};
+                    hi_screen.cells[ci].pixel_indices.resize(64, 0);
+                }
+            }
+
+            vic2::ModeParams hi_params = {cols * 8, rows * 8, 8, 8, 2, false};
+            vic2::ModeParams mc_params = {cols * 4, rows * 8, 4, 8, 4, true};
+            dither::apply(image, hi_screen, palette, hi_params, dither_settings);
+            dither::apply(mc_image, mc_screen, palette, mc_params, dither_settings);
+
+            // Merge results back
+            for (std::size_t ci = 0; ci < num_cells; ++ci) {
+                if (cell_is_hires[ci])
+                    screen.cells[ci] = hi_screen.cells[ci];
+                else
+                    screen.cells[ci] = mc_screen.cells[ci];
+            }
+        } else {
+            vic2::ModeParams params;
+            if (multicolor)
+                params = {cols * 4, rows * 8, 4, 8, 4, true};
+            else
+                params = {cols * 8, rows * 8, 8, 8, 2, false};
+            dither::apply(image, screen, palette, params, dither_settings);
+        }
     }
 
     // Phase 3: Encode patterns from dithered pixel assignments
     std::vector<CellQuant> cells;
-    if (multicolor)
+    if (mixed)
+        cells = encode_patterns_mixed(screen, num_cells, cell_is_hires);
+    else if (multicolor)
         cells = encode_patterns_multicolor(screen, num_cells);
     else
         cells = encode_patterns_hires(screen, num_cells);
@@ -788,13 +1285,11 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
     if (unique_before > 256) {
         log_println("  Merging {} -> 256 patterns...", unique_before);
 
-        if (multicolor) {
+        if (multicolor || mixed) {
             auto pal_lab = precompute_lab(palette);
             std::array<OKLab, 3> shared_lab = {
                 pal_lab[bg], pal_lab[mc1], pal_lab[mc2]};
 
-            // Max penalty = largest squared OKLab distance between any two
-            // palette colors. Conservative bound for unknown per-cell slot.
             float max_dist = 0.0f;
             for (std::size_t i = 0; i < pal_lab.size(); ++i)
                 for (std::size_t j = i + 1; j < pal_lab.size(); ++j) {
@@ -804,20 +1299,26 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
                     max_dist = std::max(max_dist, dL*dL + da*da + db*db);
                 }
 
-            merge_to_256(dedup, [&](const Pattern& a, const Pattern& b) {
-                return pattern_distance_multicolor(a, b, shared_lab, max_dist);
+            merge_to_256(dedup, [&](std::size_t ai, std::size_t bi) {
+                auto& ea = dedup.entries[ai];
+                auto& eb = dedup.entries[bi];
+                // Never merge across hires/MC boundary
+                if (ea.is_hires != eb.is_hires)
+                    return std::numeric_limits<float>::max();
+                if (ea.is_hires)
+                    return pattern_distance_hires(ea.pattern, eb.pattern);
+                return pattern_distance_multicolor(
+                    ea.pattern, eb.pattern, shared_lab, max_dist);
             });
         } else {
-            // Hires: every pixel diff is bg↔fg where fg varies per cell.
-            // Can't do better than Hamming here.
-            merge_to_256(dedup, [](const Pattern& a, const Pattern& b) {
-                return pattern_distance_hires(a, b);
+            merge_to_256(dedup, [&](std::size_t ai, std::size_t bi) {
+                return pattern_distance_hires(
+                    dedup.entries[ai].pattern, dedup.entries[bi].pattern);
             });
         }
     }
 
     // Phase 6: Extract into flat arrays for refinement
-    // Map alive dedup entries to charset indices 0..255
     std::vector<std::size_t> alive_indices;
     std::size_t empty_entry_idx = std::numeric_limits<std::size_t>::max();
     for (std::size_t i = 0; i < dedup.entries.size(); ++i) {
@@ -839,11 +1340,13 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
 
     auto chars_used = next_idx;
 
-    // Extract patterns and assignments into flat arrays
     std::array<Pattern, 256> flat_patterns{};
+    std::array<bool, 256> flat_pattern_is_hires{};
     for (std::size_t i = 0; i < dedup.entries.size(); ++i) {
         if (!dedup.entries[i].alive) continue;
-        flat_patterns[entry_to_charset[i]] = dedup.entries[i].pattern;
+        auto idx = entry_to_charset[i];
+        flat_patterns[idx] = dedup.entries[i].pattern;
+        flat_pattern_is_hires[idx] = dedup.entries[i].is_hires;
     }
 
     std::vector<std::uint8_t> flat_assignments(num_cells);
@@ -854,15 +1357,23 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
     }
 
     // Phase 7: Iterative refinement
-    // With dithering: only refine assignments + per-cell colors (preserve dither patterns)
-    // Without dithering: full k-means including centroid recomputation
     bool has_dither = (dither_settings.method != dither::Method::none);
     log_println("  Refining charset ({})...",
                  has_dither ? "assignments only, preserving dither"
                             : "full k-means");
-    refine_charset(image, palette, multicolor, bg, mc1, mc2,
-                   cols, rows, flat_patterns, flat_assignments,
-                   flat_color_ram, 10, !has_dither);
+
+    if (mixed) {
+        // For mixed mode, refinement must respect per-cell and per-pattern modes
+        // Cells can only be assigned to patterns of matching mode
+        refine_charset_mixed(image, palette, bg, mc1, mc2,
+                             cols, rows, flat_patterns, flat_pattern_is_hires,
+                             flat_assignments, flat_color_ram, cell_is_hires,
+                             10, !has_dither);
+    } else {
+        refine_charset(image, palette, multicolor, bg, mc1, mc2,
+                       cols, rows, flat_patterns, flat_assignments,
+                       flat_color_ram, 10, !has_dither);
+    }
 
     // Recount unique patterns after refinement
     std::set<Pattern> unique_after;
@@ -877,11 +1388,24 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
     result.mc2 = mc2;
     result.cols = cols;
     result.rows = rows;
-    result.multicolor = multicolor;
+    result.multicolor = true; // VIC-II is in MC text mode for both MC and mixed
+    result.mixed = mixed;
+    if (mode == CharsetMode::hires) result.multicolor = false;
     result.unique_before_merge = unique_before;
     result.chars_used = chars_used;
     result.empty_cells = empty_count;
     result.charset_data.fill(0);
+
+    if (mixed) {
+        result.cell_is_hires.resize(num_cells);
+        std::size_t hi_count = 0, mc_count = 0;
+        for (std::size_t ci = 0; ci < num_cells; ++ci) {
+            result.cell_is_hires[ci] = cell_is_hires[ci];
+            if (cell_is_hires[ci]) ++hi_count; else ++mc_count;
+        }
+        result.hires_cells = hi_count;
+        result.mc_cells = mc_count;
+    }
 
     for (std::size_t p = 0; p < 256; ++p)
         for (std::size_t b = 0; b < 8; ++b)
@@ -902,7 +1426,8 @@ void write_header_to(std::ostream& out, const CharsetResult& result,
     out << "#pragma once\n\n";
     out << "// Generated by png2c64\n";
     out << std::format("// Mode: {} charset\n",
-                       result.multicolor ? "multicolor" : "hires");
+                       result.mixed ? "mixed hires/multicolor"
+                       : result.multicolor ? "multicolor" : "hires");
     out << std::format("// Grid: {}x{} ({} cells)\n",
                        result.cols, result.rows, num_cells);
     out << std::format("// Unique chars used: {} / 256\n\n",
@@ -982,6 +1507,44 @@ std::string generate_header(const CharsetResult& result,
 Image render(const CharsetResult& result, const Palette& palette) {
     auto cols = result.cols;
     auto rows = result.rows;
+
+    if (result.mixed) {
+        // Mixed mode: 320-wide output, per-cell hires or MC decoding
+        Image output(cols * 8, rows * 8);
+        for (std::size_t ci = 0; ci < cols * rows; ++ci) {
+            auto cx = ci % cols;
+            auto cy = ci / cols;
+            auto char_idx = result.screen_map[ci];
+            auto cr = result.color_ram[ci];
+            bool is_hi = result.cell_is_hires[ci];
+
+            for (std::size_t row = 0; row < 8; ++row) {
+                auto byte = result.charset_data[char_idx * 8 + row];
+                if (is_hi) {
+                    for (std::size_t col = 0; col < 8; ++col) {
+                        bool is_fg = (byte >> (7 - col)) & 1;
+                        auto pal_idx = is_fg ? cr : result.background;
+                        output[cx * 8 + col, cy * 8 + row] = palette.colors[pal_idx];
+                    }
+                } else {
+                    for (std::size_t col = 0; col < 4; ++col) {
+                        auto bits = (byte >> (6 - col * 2)) & 0x03;
+                        std::uint8_t pal_idx;
+                        switch (bits) {
+                        case 0: pal_idx = result.background; break;
+                        case 1: pal_idx = result.mc1; break;
+                        case 2: pal_idx = result.mc2; break;
+                        default: pal_idx = cr; break;
+                        }
+                        auto color = palette.colors[pal_idx];
+                        output[cx * 8 + col * 2, cy * 8 + row] = color;
+                        output[cx * 8 + col * 2 + 1, cy * 8 + row] = color;
+                    }
+                }
+            }
+        }
+        return output;
+    }
 
     if (result.multicolor) {
         Image output(cols * 4 * 2, rows * 8);
