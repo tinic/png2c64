@@ -383,7 +383,9 @@ MixedColorSelection select_colors_mixed(
                 for (std::size_t ci = 0; ci < num_cells; ++ci) {
                     float best_err = std::numeric_limits<float>::max();
                     std::uint8_t best_fg = 0;
-                    for (std::uint8_t fg = 0; fg < n; ++fg) {
+                    // VIC-II MC text mode: hires fg comes from color RAM bits 0-2
+                    // (bit 3 must be clear to select hires), so fg is limited to 0-7
+                    for (std::uint8_t fg = 0; fg < 8; ++fg) {
                         if (fg == bg) continue;
                         auto& fg_l = pal_lab[fg];
                         float err = 0.0f;
@@ -1018,7 +1020,6 @@ void refine_charset_mixed(
     int max_iters, bool recompute_centroids) {
 
     auto pal_lab = precompute_lab(palette);
-    auto n_pal = static_cast<std::uint8_t>(palette.size());
     auto num_cells = cols * rows;
 
     // Precompute cell pixels: hires=64 OKLab values, MC=32 (averaged pairs)
@@ -1100,7 +1101,9 @@ void refine_charset_mixed(
             std::uint8_t best_pc = color_ram[ci];
             bool is_hi = cell_is_hires[ci];
 
-            auto pc_limit = is_hi ? n_pal : std::uint8_t{8};
+            // Both hires and MC limited to 0-7 in MC text mode
+            // (hires: bit 3 = MC enable flag; MC: only 3 bits available)
+            auto pc_limit = std::uint8_t{8};
             for (std::uint8_t pc = 0; pc < pc_limit; ++pc) {
                 if (is_hi && pc == bg) continue;
                 if (!is_hi && (pc == bg || pc == mc1 || pc == mc2)) continue;
