@@ -73,7 +73,7 @@ void print_usage() {
         "     2:1 MC:  checker, bayer2x2, h2x4, clustered, fs-wide, jarvis\n"
         "     Lines:   line2, line-checker, line4, line8, line-fs\n"
         "  --dither-strength <float>       Dithering strength 0.0-2.0 (default: 1.0)\n"
-        "  --error-clamp <float>           Max error per channel 0.1-2.0 (default: 0.8)\n"
+        "  --error-clamp <float>           Max error per channel 0.1-2.0 (default: 0.1)\n"
         "  --adaptive <float>              Contrast-adaptive diffusion 0.0-1.0 (default: 0.0)\n"
         "  --no-serpentine                  Disable serpentine scanning\n"
         "  --match-range                    Enable palette range matching (default: off)\n"
@@ -459,11 +459,11 @@ constexpr std::array gamma_gallery = {
 
 // Error clamp: 0.2 .. 2.0
 constexpr std::array error_clamp_gallery = {
-    FloatGalleryEntry{0.20f, "error-clamp = 0.20 (tight)"},
+    FloatGalleryEntry{0.10f, "error-clamp = 0.10 (default)"},
+    FloatGalleryEntry{0.20f, "error-clamp = 0.20"},
     FloatGalleryEntry{0.40f, "error-clamp = 0.40"},
     FloatGalleryEntry{0.60f, "error-clamp = 0.60"},
-    FloatGalleryEntry{0.80f, "error-clamp = 0.80 (default)"},
-    FloatGalleryEntry{1.00f, "error-clamp = 1.00"},
+    FloatGalleryEntry{0.80f, "error-clamp = 0.80"},
     FloatGalleryEntry{1.50f, "error-clamp = 1.50"},
     FloatGalleryEntry{2.00f, "error-clamp = 2.00 (loose)"},
 };

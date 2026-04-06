@@ -75,7 +75,7 @@ export const SLIDERS = [
 
 // These only apply to error diffusion dither methods
 export const DIFFUSION_SLIDERS = [
-  { key: 'errorClamp',     label: 'Error Clamp', min: 0,   max: 2.0, step: 0.05, default: 0.8,
+  { key: 'errorClamp',     label: 'Error Clamp', min: 0,   max: 2.0, step: 0.05, default: 0.1,
     tip: 'Max error accumulation per channel. Lower = fewer stray pixels, higher = more detail.' },
   { key: 'adaptive',       label: 'Adaptive',    min: 0,   max: 1.0, step: 0.05, default: 0.0,
     tip: 'Contrast-adaptive error diffusion. Reduces dithering in detailed areas, keeps it in flat areas.' },
