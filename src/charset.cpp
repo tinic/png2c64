@@ -368,6 +368,44 @@ MixedColorSelection select_colors_mixed(
             }
         }
 
+    // Precompute best hires result per cell per background color.
+    // hi_best[bg][ci] = {error, fg}  — avoids redoing 16×64 work per triple.
+    struct HiresResult { float error; std::uint8_t fg; };
+    std::vector<std::vector<HiresResult>> hi_best(n, std::vector<HiresResult>(num_cells));
+
+    {
+        std::atomic<std::size_t> next_bg{0};
+        auto hi_worker = [&] {
+            while (true) {
+                auto bg = next_bg.fetch_add(1, std::memory_order_relaxed);
+                if (bg >= n) break;
+                auto& bg_l = pal_lab[bg];
+                for (std::size_t ci = 0; ci < num_cells; ++ci) {
+                    float best_err = std::numeric_limits<float>::max();
+                    std::uint8_t best_fg = 0;
+                    for (std::uint8_t fg = 0; fg < n; ++fg) {
+                        if (fg == bg) continue;
+                        auto& fg_l = pal_lab[fg];
+                        float err = 0.0f;
+                        for (auto& px : cells_hi[ci]) {
+                            float db = (px.L-bg_l.L)*(px.L-bg_l.L) + (px.a-bg_l.a)*(px.a-bg_l.a) + (px.b-bg_l.b)*(px.b-bg_l.b);
+                            float df = (px.L-fg_l.L)*(px.L-fg_l.L) + (px.a-fg_l.a)*(px.a-fg_l.a) + (px.b-fg_l.b)*(px.b-fg_l.b);
+                            err += std::min(db, df);
+                        }
+                        if (err < best_err) { best_err = err; best_fg = fg; }
+                    }
+                    hi_best[bg][ci] = {best_err, best_fg};
+                }
+            }
+        };
+        auto nt = std::min(static_cast<std::size_t>(hw_threads()),
+                           static_cast<std::size_t>(n));
+        std::vector<std::jthread> threads;
+        threads.reserve(nt - 1);
+        for (std::size_t t = 1; t < nt; ++t) threads.emplace_back(hi_worker);
+        hi_worker();
+    }
+
     // Try all C(16,3) triples for shared colors
     struct TripleResult {
         std::uint8_t c0, c1, c2;
@@ -413,27 +451,18 @@ MixedColorSelection select_colors_mixed(
                     if (err < best_mc_err) { best_mc_err = err; best_mc_pc = pc; }
                 }
 
-                // Try hires: best bg from shared triple + best fg from all 16
-                // Try each shared color as potential background
+                // Hires: look up precomputed best for each shared color as bg
                 float best_hi_err = std::numeric_limits<float>::max();
                 std::uint8_t best_hi_fg = 0;
                 for (auto bg_cand : {cand.c0, cand.c1, cand.c2}) {
-                    for (std::uint8_t fg = 0; fg < n; ++fg) {
-                        if (fg == bg_cand) continue;
-                        float err = 0.0f;
-                        for (auto& px : cells_hi[ci]) {
-                            auto& bl = pal_lab[bg_cand];
-                            auto& fl = pal_lab[fg];
-                            float db = (px.L-bl.L)*(px.L-bl.L) + (px.a-bl.a)*(px.a-bl.a) + (px.b-bl.b)*(px.b-bl.b);
-                            float df = (px.L-fl.L)*(px.L-fl.L) + (px.a-fl.a)*(px.a-fl.a) + (px.b-fl.b)*(px.b-fl.b);
-                            err += std::min(db, df);
-                        }
-                        if (err < best_hi_err) { best_hi_err = err; best_hi_fg = fg; }
+                    auto& hr = hi_best[bg_cand][ci];
+                    if (hr.error < best_hi_err) {
+                        best_hi_err = hr.error;
+                        best_hi_fg = hr.fg;
                     }
                 }
 
                 // Normalize per-pixel: hires has 64 pixels, MC has 32
-                // Compare average error per pixel for a fair mode decision
                 auto hi_avg = best_hi_err / 64.0f;
                 auto mc_avg = best_mc_err / 32.0f;
                 if (hi_avg <= mc_avg) {
