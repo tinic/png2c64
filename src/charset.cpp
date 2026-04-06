@@ -522,11 +522,37 @@ MixedColorSelection select_colors_mixed(
 
     for (std::size_t ci = 0; ci < num_cells; ++ci) {
         auto& cell = screen.cells[ci];
-        auto is_hi = best_it->is_hires[ci];
+
+        // Re-evaluate mode decision with the actual bg/mc1/mc2 assignment.
+        // The triple search may have picked hires with a different bg candidate.
+        auto& hr = hi_best[bg_color][ci];
+        float hi_avg = hr.error / 64.0f;
+
+        // Recompute MC error with actual color ordering
+        float best_mc_err = std::numeric_limits<float>::max();
+        std::uint8_t best_mc_pc = 0;
+        for (std::uint8_t pc = 0; pc < 8; ++pc) {
+            if (pc == bg_color || pc == mc1_color || pc == mc2_color) continue;
+            std::array<std::uint8_t, 4> colors = {bg_color, mc1_color, mc2_color, pc};
+            float err = 0.0f;
+            for (auto& px : cells_mc[ci]) {
+                float best = std::numeric_limits<float>::max();
+                for (auto c : colors) {
+                    auto& cl = pal_lab[c];
+                    float d = (px.L-cl.L)*(px.L-cl.L) + (px.a-cl.a)*(px.a-cl.a) + (px.b-cl.b)*(px.b-cl.b);
+                    if (d < best) best = d;
+                }
+                err += best;
+            }
+            if (err < best_mc_err) { best_mc_err = err; best_mc_pc = pc; }
+        }
+        float mc_avg = best_mc_err / 32.0f;
+
+        bool is_hi = (hi_avg <= mc_avg);
         cell_is_hires[ci] = is_hi;
 
         if (is_hi) {
-            auto fg = best_it->per_cell[ci];
+            auto fg = hr.fg;
             cell.cell_colors = {bg_color, fg};
             cell.pixel_indices.resize(64);
             auto& bg_l = pal_lab[bg_color];
@@ -538,8 +564,7 @@ MixedColorSelection select_colors_mixed(
                 cell.pixel_indices[pi] = (df < db) ? 1 : 0;
             }
         } else {
-            auto pc = best_it->per_cell[ci];
-            cell.cell_colors = {bg_color, mc1_color, mc2_color, pc};
+            cell.cell_colors = {bg_color, mc1_color, mc2_color, best_mc_pc};
             cell.pixel_indices.resize(32);
             for (std::size_t pi = 0; pi < 32; ++pi) {
                 auto& px = cells_mc[ci][pi];
