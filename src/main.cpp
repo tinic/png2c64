@@ -696,13 +696,14 @@ struct RawTerminal {
 };
 
 // Short dither names for display
-constexpr std::array<std::string_view, 17> dither_names = {
+constexpr std::array<std::string_view, 23> dither_names = {
     "none", "bayer4", "bayer8", "checker", "bayer2x2", "h2x4",
     "clustered", "line2", "line-check", "line4", "line8",
     "fs", "atkinson", "sierra", "fs-wide", "jarvis", "line-fs",
+    "halftone8", "diagonal8", "spiral5", "hex8", "hex5", "blue-noise",
 };
 
-constexpr std::array<dither::Method, 17> dither_methods = {
+constexpr std::array<dither::Method, 23> dither_methods = {
     dither::Method::none, dither::Method::bayer4x4, dither::Method::bayer8x8,
     dither::Method::checker, dither::Method::bayer2x2, dither::Method::h2x4,
     dither::Method::clustered_dot, dither::Method::line2,
@@ -710,6 +711,9 @@ constexpr std::array<dither::Method, 17> dither_methods = {
     dither::Method::floyd_steinberg, dither::Method::atkinson,
     dither::Method::sierra_lite, dither::Method::fs_wide,
     dither::Method::jarvis, dither::Method::line_fs,
+    dither::Method::halftone8x8, dither::Method::diagonal8x8,
+    dither::Method::spiral5x5, dither::Method::hex8x8,
+    dither::Method::hex5x5, dither::Method::blue_noise,
 };
 
 std::size_t dither_index(dither::Method m) {

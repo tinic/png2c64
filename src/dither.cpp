@@ -155,6 +155,111 @@ constexpr auto line_checker_mat = make_line_checker();
 constexpr auto line4_mat = make_line4();
 constexpr auto line8_mat = make_line8();
 
+// 45-degree halftone 8x8 (newspaper/print look, 32 gray levels)
+constexpr auto make_halftone8x8() noexcept {
+    constexpr std::array<std::array<int, 8>, 8> raw = {{
+        {{13,  7,  8, 14, 17, 21, 22, 18}},
+        {{ 6,  1,  3,  9, 28, 31, 29, 23}},
+        {{ 5,  2,  4, 10, 27, 32, 30, 24}},
+        {{16, 12, 11, 15, 20, 26, 25, 19}},
+        {{17, 21, 22, 18, 13,  7,  8, 14}},
+        {{28, 31, 29, 23,  6,  1,  3,  9}},
+        {{27, 32, 30, 24,  5,  2,  4, 10}},
+        {{20, 26, 25, 19, 16, 12, 11, 15}},
+    }};
+    std::array<std::array<float, 8>, 8> m{};
+    for (std::size_t y = 0; y < 8; ++y)
+        for (std::size_t x = 0; x < 8; ++x)
+            m[y][x] = (static_cast<float>(raw[y][x]) - 0.5f) / 32.0f - 0.5f;
+    return m;
+}
+constexpr auto make_diagonal8x8() noexcept {
+    constexpr std::array<std::array<int, 8>, 8> raw = {{
+        {{24, 10, 12, 26, 35, 47, 49, 37}},
+        {{ 8,  0,  2, 14, 45, 59, 61, 51}},
+        {{22,  6,  4, 16, 43, 57, 63, 53}},
+        {{30, 20, 18, 28, 33, 41, 55, 39}},
+        {{34, 46, 48, 36, 25, 11, 13, 27}},
+        {{44, 58, 60, 50,  9,  1,  3, 15}},
+        {{42, 56, 62, 52, 23,  7,  5, 17}},
+        {{32, 40, 54, 38, 31, 21, 19, 29}},
+    }};
+    std::array<std::array<float, 8>, 8> m{};
+    for (std::size_t y = 0; y < 8; ++y)
+        for (std::size_t x = 0; x < 8; ++x)
+            m[y][x] = (static_cast<float>(raw[y][x]) + 0.5f) / 64.0f - 0.5f;
+    return m;
+}
+constexpr auto make_spiral5x5() noexcept {
+    constexpr std::array<std::array<int, 5>, 5> raw = {{
+        {{20, 21, 22, 23, 24}},
+        {{19,  6,  7,  8,  9}},
+        {{18,  5,  0,  1, 10}},
+        {{17,  4,  3,  2, 11}},
+        {{16, 15, 14, 13, 12}},
+    }};
+    std::array<std::array<float, 5>, 5> m{};
+    for (std::size_t y = 0; y < 5; ++y)
+        for (std::size_t x = 0; x < 5; ++x)
+            m[y][x] = (static_cast<float>(raw[y][x]) + 0.5f) / 25.0f - 0.5f;
+    return m;
+}
+constexpr auto make_hex8x8() noexcept {
+    constexpr std::array<std::array<int, 8>, 8> raw = {{
+        {{3, 4, 2, 7, 1, 6, 0, 5}},
+        {{6, 0, 5, 3, 4, 2, 7, 1}},
+        {{2, 7, 1, 6, 0, 5, 3, 4}},
+        {{5, 3, 4, 2, 7, 1, 6, 0}},
+        {{1, 6, 0, 5, 3, 4, 2, 7}},
+        {{4, 2, 7, 1, 6, 0, 5, 3}},
+        {{0, 5, 3, 4, 2, 7, 1, 6}},
+        {{7, 1, 6, 0, 5, 3, 4, 2}},
+    }};
+    std::array<std::array<float, 8>, 8> m{};
+    for (std::size_t y = 0; y < 8; ++y)
+        for (std::size_t x = 0; x < 8; ++x)
+            m[y][x] = (static_cast<float>(raw[y][x]) + 0.5f) / 8.0f - 0.5f;
+    return m;
+}
+constexpr auto make_hex5x5() noexcept {
+    constexpr std::array<std::array<int, 5>, 5> raw = {{
+        {{4, 3, 0, 1, 2}},
+        {{0, 1, 2, 4, 3}},
+        {{2, 4, 3, 0, 1}},
+        {{3, 0, 1, 2, 4}},
+        {{1, 2, 4, 3, 0}},
+    }};
+    std::array<std::array<float, 5>, 5> m{};
+    for (std::size_t y = 0; y < 5; ++y)
+        for (std::size_t x = 0; x < 5; ++x)
+            m[y][x] = (static_cast<float>(raw[y][x]) + 0.5f) / 5.0f - 0.5f;
+    return m;
+}
+constexpr auto make_blue_noise64() noexcept {
+    std::array<std::array<float, 64>, 64> m{};
+    for (std::size_t y = 0; y < 64; ++y) {
+        for (std::size_t x = 0; x < 64; ++x) {
+            auto fx = static_cast<float>(x);
+            auto fy = static_cast<float>(y);
+            float v = 52.9829189f * (0.06711056f * fx + 0.00583715f * fy);
+            v = v - static_cast<float>(static_cast<int>(v));
+            if (v < 0.0f) v += 1.0f;
+            v = 52.9829189f * v;
+            v = v - static_cast<float>(static_cast<int>(v));
+            if (v < 0.0f) v += 1.0f;
+            m[y][x] = v - 0.5f;
+        }
+    }
+    return m;
+}
+
+constexpr auto halftone8x8_mat = make_halftone8x8();
+constexpr auto diagonal8x8_mat = make_diagonal8x8();
+constexpr auto spiral5x5_mat = make_spiral5x5();
+constexpr auto hex8x8_mat = make_hex8x8();
+constexpr auto hex5x5_mat = make_hex5x5();
+constexpr auto blue_noise_mat = make_blue_noise64();
+
 // ===========================================================================
 // OKLab arithmetic helpers
 // ===========================================================================
@@ -583,6 +688,30 @@ void apply(const Image& image, quantize::ScreenResult& result,
         apply_ordered_matrix(image, result, line8_mat, palette_lab,
                              params, settings.strength);
         return;
+    case Method::halftone8x8:
+        apply_ordered_matrix(image, result, halftone8x8_mat, palette_lab,
+                             params, settings.strength);
+        return;
+    case Method::diagonal8x8:
+        apply_ordered_matrix(image, result, diagonal8x8_mat, palette_lab,
+                             params, settings.strength);
+        return;
+    case Method::spiral5x5:
+        apply_ordered_matrix(image, result, spiral5x5_mat, palette_lab,
+                             params, settings.strength);
+        return;
+    case Method::hex8x8:
+        apply_ordered_matrix(image, result, hex8x8_mat, palette_lab,
+                             params, settings.strength);
+        return;
+    case Method::hex5x5:
+        apply_ordered_matrix(image, result, hex5x5_mat, palette_lab,
+                             params, settings.strength);
+        return;
+    case Method::blue_noise:
+        apply_ordered_matrix(image, result, blue_noise_mat, palette_lab,
+                             params, settings.strength);
+        return;
 
     // Square-pixel error diffusion
     case Method::floyd_steinberg:
@@ -640,6 +769,12 @@ float ordered_threshold(Method method, std::size_t x, std::size_t y) {
     case Method::line_checker:  return line_checker_mat[y % 2][x % 2];
     case Method::line4:         return line4_mat[y % 4][0];
     case Method::line8:         return line8_mat[y % 8][0];
+    case Method::halftone8x8:  return halftone8x8_mat[y % 8][x % 8];
+    case Method::diagonal8x8:  return diagonal8x8_mat[y % 8][x % 8];
+    case Method::spiral5x5:    return spiral5x5_mat[y % 5][x % 5];
+    case Method::hex8x8:       return hex8x8_mat[y % 8][x % 8];
+    case Method::hex5x5:       return hex5x5_mat[y % 5][x % 5];
+    case Method::blue_noise:   return blue_noise_mat[y % 64][x % 64];
     default:                    return 0.0f;
     }
 }

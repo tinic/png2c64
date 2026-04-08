@@ -51,6 +51,16 @@ export const DITHER_METHODS = [
   { group: 'Error Diffusion (line)', items: [
     { value: 'line-fs', label: 'Line F-S' },
   ]},
+  { group: 'Halftone', items: [
+    { value: 'halftone8', label: 'Halftone 8x8 (45°)' },
+    { value: 'diagonal8', label: 'Diagonal 8x8' },
+    { value: 'spiral5', label: 'Spiral 5x5' },
+  ]},
+  { group: 'Non-rectangular', items: [
+    { value: 'hex8', label: 'Hexagonal 8x8' },
+    { value: 'hex5', label: 'Hexagonal 5x5' },
+    { value: 'blue-noise', label: 'Blue Noise' },
+  ]},
 ]
 
 export const SLIDERS = [
