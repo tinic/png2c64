@@ -14,6 +14,7 @@ import { track } from './lib/analytics.js'
             <p class="m-0 mt-1 text-sm text-color-secondary">
               Convert images to Commodore 64 VIC-II formats with perceptual color matching
               — <a href="https://github.com/tinic/png2c64" target="_blank" class="github-link" @click="track('github-click')">GitHub <i class="pi pi-github"></i></a>
+              — Sister project: <a href="https://www.png2amiga.app" target="_blank" class="github-link">png2amiga</a>
             </p>
           </div>
         </div>
