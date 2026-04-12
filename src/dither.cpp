@@ -327,6 +327,45 @@ NearestResult find_nearest_oklab(
     return {best_idx, best_lab};
 }
 
+// Find the nearest + second-nearest cell colors (for ordered dithering).
+struct NearestPairResult {
+    std::uint8_t idxA, idxB;       // local indices into cell_colors
+    float distA, distB;             // OKLab ΔE²
+    OKLab labA, labB;
+};
+
+NearestPairResult find_nearest_pair_oklab(
+    OKLab pixel_lab,
+    std::span<const std::uint8_t> cell_colors,
+    std::span<const OKLab> palette_lab) {
+
+    float best = std::numeric_limits<float>::max();
+    float second = std::numeric_limits<float>::max();
+    std::uint8_t bi = 0, si = 0;
+    OKLab bl{}, sl{};
+
+    for (std::size_t c = 0; c < cell_colors.size(); ++c) {
+        auto& cl = palette_lab[cell_colors[c]];
+        float dL = pixel_lab.L - cl.L;
+        float da = pixel_lab.a - cl.a;
+        float db = pixel_lab.b - cl.b;
+        float dist = dL * dL + da * da + db * db;
+
+        if (dist < best) {
+            second = best; si = bi; sl = bl;
+            best = dist; bi = static_cast<std::uint8_t>(c); bl = cl;
+        } else if (dist < second) {
+            second = dist; si = static_cast<std::uint8_t>(c); sl = cl;
+        }
+    }
+
+    // If only one color in the cell, second = first
+    if (cell_colors.size() < 2) {
+        si = bi; sl = bl; second = best;
+    }
+    return {bi, si, best, second, bl, sl};
+}
+
 std::vector<OKLab> precompute_palette_lab(const Palette& palette) {
     std::vector<OKLab> lab(palette.size());
     for (std::size_t i = 0; i < palette.size(); ++i) {
@@ -410,16 +449,151 @@ void apply_ordered_matrix(const Image& image, quantize::ScreenResult& result,
                 auto pixel_lab =
                     color_space::linear_to_oklab(image[px + dx, py + dy]);
 
-                float threshold = matrix[(py + dy) % H][(px + dx) % W];
-
-                pixel_lab.L += threshold * strength * 0.15f;
-                pixel_lab.a += threshold * strength * 0.03f;
-                pixel_lab.b += threshold * strength * 0.03f;
-
-                auto [idx, chosen] = find_nearest_oklab(
+                // Ordered dithering: find nearest + second-nearest cell
+                // colors, then use threshold to pick between them based on
+                // perceptual blend fraction.  Scale-invariant and produces
+                // classical binary (hires) or 4-level (multicolor) ordered
+                // dithering correctly.
+                auto np = find_nearest_pair_oklab(
                     pixel_lab, row_colors, palette_lab);
-                cell.pixel_indices[pi] = idx;
+                float total_sq = np.distA + np.distB;
+                float t = (total_sq > 1e-12f)
+                    ? (std::sqrt(np.distA) /
+                       (std::sqrt(np.distA) + std::sqrt(np.distB)))
+                    : 0.0f;
+                float thr = matrix[(py + dy) % H][(px + dx) % W] + 0.5f;
+                bool use_b = (thr < t * strength);
+                cell.pixel_indices[pi] = use_b ? np.idxB : np.idxA;
                 ++pi;
+            }
+        }
+    }
+}
+
+// Analytical ordered dithering: same two-nearest selection as the matrix
+// variant, but threshold comes from ordered_threshold() (IGN, R2, IGN,
+// white noise, crosshatch, radial, value noise).
+void apply_ordered_analytical(const Image& image, quantize::ScreenResult& result,
+                               Method method,
+                               std::span<const OKLab> palette_lab,
+                               const vic2::ModeParams& params, float strength) {
+    auto cx = params.screen_width / params.cell_width;
+
+    for (std::size_t cell_idx = 0; cell_idx < result.cells.size();
+         ++cell_idx) {
+        auto& cell = result.cells[cell_idx];
+        auto cell_x = cell_idx % cx;
+        auto cell_y = cell_idx / cx;
+        auto px = cell_x * params.cell_width;
+        auto py = cell_y * params.cell_height;
+
+        bool fli = vic2::is_fli_mode(result.mode);
+        std::size_t pi = 0;
+        for (std::size_t dy = 0; dy < params.cell_height; ++dy) {
+            auto row_colors = fli
+                ? get_row_colors(cell, result.mode, dy)
+                : std::vector<std::uint8_t>(cell.cell_colors.begin(),
+                                             cell.cell_colors.end());
+            for (std::size_t dx = 0; dx < params.cell_width; ++dx) {
+                auto pixel_lab =
+                    color_space::linear_to_oklab(image[px + dx, py + dy]);
+
+                auto np = find_nearest_pair_oklab(
+                    pixel_lab, row_colors, palette_lab);
+                float total_sq = np.distA + np.distB;
+                float t = (total_sq > 1e-12f)
+                    ? (std::sqrt(np.distA) /
+                       (std::sqrt(np.distA) + std::sqrt(np.distB)))
+                    : 0.0f;
+                float thr = ordered_threshold(method, px + dx, py + dy) + 0.5f;
+                bool use_b = (thr < t * strength);
+                cell.pixel_indices[pi] = use_b ? np.idxB : np.idxA;
+                ++pi;
+            }
+        }
+    }
+}
+
+struct DiffusionEntry {
+    int dx;
+    int dy;
+    float weight;
+};
+
+// Ostromoukhov variable-coefficient error diffusion: same as F-S but scale
+// the kernel weights by (0.6 + 0.8·t) where t is the nearest/second-nearest
+// threshold fraction.  Uncertain pixels (t≈0.5) diffuse more aggressively;
+// well-served pixels (t≈0) diffuse less.
+void apply_ostromoukhov(
+    const Image& image, quantize::ScreenResult& result,
+    const Palette& palette, const vic2::ModeParams& params,
+    float strength, float error_clamp_val, bool serpentine) {
+
+    auto w = params.screen_width;
+    auto h = params.screen_height;
+    auto cx = params.screen_width / params.cell_width;
+
+    auto cell_colors_count = params.colors_per_cell;
+    float ec = error_clamp_val;
+    if (cell_colors_count > 0 && cell_colors_count <= 64) {
+        ec = error_clamp_val *
+             std::sqrt(static_cast<float>(cell_colors_count) / 32.0f);
+    }
+
+    std::vector<OKLab> image_lab(w * h);
+    for (std::size_t y = 0; y < h; ++y)
+        for (std::size_t x = 0; x < w; ++x)
+            image_lab[y * w + x] = color_space::linear_to_oklab(image[x, y]);
+
+    auto palette_lab = precompute_palette_lab(palette);
+    std::vector<OKLab> error_buf(w * h);
+
+    // Floyd-Steinberg kernel as base; scale by Ostromoukhov factor per pixel
+    constexpr DiffusionEntry fs_kernel[] = {
+        {1, 0, 7.0f / 16.0f}, {-1, 1, 3.0f / 16.0f},
+        {0, 1, 5.0f / 16.0f}, {1, 1, 1.0f / 16.0f}};
+
+    for (std::size_t y = 0; y < h; ++y) {
+        bool reverse = serpentine && (y % 2 == 1);
+        for (std::size_t step = 0; step < w; ++step) {
+            std::size_t x = reverse ? (w - 1 - step) : step;
+            auto buf_idx = y * w + x;
+
+            auto [cell, pi] = get_pixel_cell(result, x, y, params, cx);
+            auto clamped_error = oklab_clamp(error_buf[buf_idx], ec);
+            auto adjusted = oklab_add(image_lab[buf_idx], clamped_error);
+
+            auto local_y = (y % params.cell_height);
+            auto colors = vic2::is_fli_mode(result.mode)
+                ? get_row_colors(*cell, result.mode, local_y)
+                : std::vector<std::uint8_t>(cell->cell_colors.begin(),
+                                             cell->cell_colors.end());
+
+            auto np = find_nearest_pair_oklab(adjusted, colors, palette_lab);
+            cell->pixel_indices[pi] = np.idxA;
+
+            // Ostromoukhov scale: more diffusion for uncertain pixels
+            float total_sq = np.distA + np.distB;
+            float t = (total_sq > 1e-12f)
+                ? (std::sqrt(np.distA) /
+                   (std::sqrt(np.distA) + std::sqrt(np.distB)))
+                : 0.0f;
+            float ostro_scale = 0.6f + 0.8f * t;
+
+            auto quant_error =
+                oklab_scale(oklab_sub(adjusted, np.labA), strength);
+
+            for (auto& [kdx, kdy, weight] : fs_kernel) {
+                int actual_dx = reverse ? -kdx : kdx;
+                auto nx = static_cast<int>(x) + actual_dx;
+                auto ny = static_cast<int>(y) + kdy;
+                if (nx >= 0 && static_cast<std::size_t>(nx) < w &&
+                    ny >= 0 && static_cast<std::size_t>(ny) < h) {
+                    auto nidx = static_cast<std::size_t>(ny) * w +
+                                static_cast<std::size_t>(nx);
+                    oklab_distribute(error_buf, nidx, quant_error,
+                                    weight * ostro_scale, ec);
+                }
             }
         }
     }
@@ -428,12 +602,6 @@ void apply_ordered_matrix(const Image& image, quantize::ScreenResult& result,
 // ===========================================================================
 // Error diffusion (all in OKLab space)
 // ===========================================================================
-
-struct DiffusionEntry {
-    int dx;
-    int dy;
-    float weight;
-};
 
 // Compute per-pixel local contrast in OKLab L channel.
 // Returns values in [0, 1] where 0 = flat, 1 = high contrast.
@@ -473,6 +641,19 @@ void apply_error_diffusion(
     auto w = params.screen_width;
     auto h = params.screen_height;
     auto cx = params.screen_width / params.cell_width;
+
+    // Adaptive error clamp: tighter for sparse cell palettes.  C64 cells
+    // have only 2 (hires) or 4 (multicolor) effective colors — the current
+    // fixed 0.12 clamp lets error accumulate far beyond what those cells
+    // can represent, causing blotchy output.  Scale to cell palette size
+    // relative to 32 (reference palette size for 0.12 clamp).
+    auto cell_colors = params.colors_per_cell;  // 2 for hires, 4 for multicolor
+    float ec = error_clamp_val;
+    if (cell_colors > 0 && cell_colors <= 64) {
+        ec = error_clamp_val *
+             std::sqrt(static_cast<float>(cell_colors) / 32.0f);
+    }
+    error_clamp_val = ec;
 
     std::vector<OKLab> image_lab(w * h);
     for (std::size_t y = 0; y < h; ++y) {
@@ -754,6 +935,24 @@ void apply(const Image& image, quantize::ScreenResult& result,
                               settings.serpentine, settings.adaptive,
                               line_fs_kernel);
         return;
+
+    // Analytical ordered dithering (per-pixel threshold, no matrix)
+    case Method::ign:
+    case Method::r2_sequence:
+    case Method::white_noise:
+    case Method::crosshatch:
+    case Method::radial:
+    case Method::value_noise:
+        apply_ordered_analytical(image, result, settings.method,
+                                 palette_lab, params, settings.strength);
+        return;
+
+    // Advanced error diffusion
+    case Method::ostromoukhov:
+        apply_ostromoukhov(image, result, palette, params,
+                           settings.strength, settings.error_clamp,
+                           settings.serpentine);
+        return;
     }
 }
 
@@ -775,6 +974,72 @@ float ordered_threshold(Method method, std::size_t x, std::size_t y) {
     case Method::hex8x8:       return hex8x8_mat[y % 8][x % 8];
     case Method::hex5x5:       return hex5x5_mat[y % 5][x % 5];
     case Method::blue_noise:   return blue_noise_mat[y % 64][x % 64];
+    case Method::ign: {
+        auto fx = static_cast<float>(x);
+        auto fy = static_cast<float>(y);
+        float v = 52.9829189f * std::fmod(0.06711056f * fx + 0.00583715f * fy, 1.0f);
+        return std::fmod(v, 1.0f) - 0.5f;
+    }
+    case Method::r2_sequence: {
+        constexpr float phi1 = 0.7548776662f;  // 1/plastic number
+        constexpr float phi2 = 0.5698402910f;  // 1/plastic^2
+        float v = std::fmod(static_cast<float>(x) * phi1 +
+                            static_cast<float>(y) * phi2 + 0.5f, 1.0f);
+        return v - 0.5f;
+    }
+    case Method::white_noise: {
+        auto seed = static_cast<std::uint32_t>(y * 65537 + x);
+        seed = (seed ^ 61u) ^ (seed >> 16u);
+        seed *= 9u;
+        seed ^= seed >> 4u;
+        seed *= 0x27d4eb2du;
+        seed ^= seed >> 15u;
+        return static_cast<float>(seed & 0xFFFFu) / 65536.0f - 0.5f;
+    }
+    case Method::crosshatch: {
+        auto fx = static_cast<float>(x);
+        auto fy = static_cast<float>(y);
+        float d0 = std::fmod(fy, 8.0f) / 8.0f;
+        float d1 = std::fmod(fx, 8.0f) / 8.0f;
+        float d2 = std::fmod((fx + fy) * 0.7071f, 8.0f) / 8.0f;
+        float d3 = std::fmod((fx - fy + 512.0f) * 0.7071f, 8.0f) / 8.0f;
+        d0 = 1.0f - std::abs(d0 * 2.0f - 1.0f);
+        d1 = 1.0f - std::abs(d1 * 2.0f - 1.0f);
+        d2 = 1.0f - std::abs(d2 * 2.0f - 1.0f);
+        d3 = 1.0f - std::abs(d3 * 2.0f - 1.0f);
+        float t = std::min({d0, d0 * 0.5f + d1 * 0.5f,
+                            d0 * 0.3f + d1 * 0.3f + d2 * 0.4f,
+                            d0 * 0.25f + d1 * 0.25f + d2 * 0.25f + d3 * 0.25f});
+        return t - 0.5f;
+    }
+    case Method::radial: {
+        auto fx = static_cast<float>(x) - 160.0f;
+        auto fy = static_cast<float>(y) - 100.0f;  // C64 default 320x200
+        float r = std::sqrt(fx * fx + fy * fy);
+        float v = std::fmod(r * 0.15f, 1.0f);
+        return (1.0f - std::abs(v * 2.0f - 1.0f)) - 0.5f;
+    }
+    case Method::value_noise: {
+        auto hash = [](int ix, int iy) -> float {
+            auto s = static_cast<std::uint32_t>(ix * 374761393 + iy * 668265263 + 1013904223);
+            s = (s ^ (s >> 13u)) * 1274126177u;
+            return static_cast<float>(s & 0xFFFFu) / 65536.0f;
+        };
+        constexpr float scale = 0.125f;
+        float fx = static_cast<float>(x) * scale;
+        float fy = static_cast<float>(y) * scale;
+        int ix = static_cast<int>(std::floor(fx));
+        int iy = static_cast<int>(std::floor(fy));
+        float tx = fx - static_cast<float>(ix);
+        float ty = fy - static_cast<float>(iy);
+        tx = tx * tx * (3.0f - 2.0f * tx);
+        ty = ty * ty * (3.0f - 2.0f * ty);
+        float v00 = hash(ix, iy), v10 = hash(ix + 1, iy);
+        float v01 = hash(ix, iy + 1), v11 = hash(ix + 1, iy + 1);
+        float v = v00 * (1 - tx) * (1 - ty) + v10 * tx * (1 - ty) +
+                  v01 * (1 - tx) * ty + v11 * tx * ty;
+        return v - 0.5f;
+    }
     default:                    return 0.0f;
     }
 }

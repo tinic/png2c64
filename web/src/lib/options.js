@@ -40,6 +40,7 @@ export const DITHER_METHODS = [
     { value: 'line8', label: 'Line 8' },
   ]},
   { group: 'Error Diffusion', items: [
+    { value: 'ostromoukhov', label: 'Ostromoukhov' },
     { value: 'fs', label: 'Floyd-Steinberg' },
     { value: 'atkinson', label: 'Atkinson' },
     { value: 'sierra', label: 'Sierra Lite' },
@@ -60,6 +61,14 @@ export const DITHER_METHODS = [
     { value: 'hex8', label: 'Hexagonal 8x8' },
     { value: 'hex5', label: 'Hexagonal 5x5' },
     { value: 'blue-noise', label: 'Blue Noise' },
+  ]},
+  { group: 'Analytical (per-pixel)', items: [
+    { value: 'ign', label: 'Interleaved Gradient Noise' },
+    { value: 'r2', label: 'R2 Sequence' },
+    { value: 'white-noise', label: 'White Noise' },
+    { value: 'crosshatch', label: 'Crosshatch' },
+    { value: 'radial', label: 'Radial' },
+    { value: 'value-noise', label: 'Value Noise' },
   ]},
 ]
 
@@ -133,7 +142,7 @@ export function isCharsetMode(mode) {
   return mode === 'charset-hi' || mode === 'charset-mc' || mode === 'charset-mixed'
 }
 
-const ERROR_DIFFUSION = new Set(['fs', 'atkinson', 'sierra', 'fs-wide', 'jarvis', 'line-fs'])
+const ERROR_DIFFUSION = new Set(['fs', 'atkinson', 'sierra', 'fs-wide', 'jarvis', 'line-fs', 'ostromoukhov'])
 
 export function isErrorDiffusion(dither) {
   return ERROR_DIFFUSION.has(dither)

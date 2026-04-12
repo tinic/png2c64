@@ -43,6 +43,17 @@ enum class Method : unsigned char {
     hex8x8,           // non-rectangular hexagonal tiling
     hex5x5,           // non-rectangular slanted square tiling
     blue_noise,       // 64x64 blue noise (film-grain look, no visible pattern)
+
+    // Analytical ordered dithering (computed per-pixel, no LUT)
+    ign,              // Interleaved Gradient Noise (Jimenez), film-grain
+    r2_sequence,      // Martin Roberts R2 low-discrepancy sequence
+    white_noise,      // pure random hash per pixel (TV static)
+    crosshatch,       // overlaid angled line patterns (pen-and-ink)
+    radial,           // concentric circles (engraving look)
+    value_noise,      // coherent hash noise (organic clumping)
+
+    // Advanced error diffusion
+    ostromoukhov,     // variable-coefficient error diffusion
 };
 
 struct Settings {
@@ -69,6 +80,9 @@ constexpr bool is_ordered(Method m) noexcept {
     case Method::halftone8x8: case Method::diagonal8x8:
     case Method::spiral5x5: case Method::hex8x8:
     case Method::hex5x5: case Method::blue_noise:
+    case Method::ign: case Method::r2_sequence:
+    case Method::white_noise: case Method::crosshatch:
+    case Method::radial: case Method::value_noise:
         return true;
     default:
         return false;

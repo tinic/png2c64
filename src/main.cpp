@@ -79,6 +79,9 @@ void print_usage() {
         "     Square:  none, bayer4, bayer8, fs, atkinson, sierra\n"
         "     2:1 MC:  checker, bayer2x2, h2x4, clustered, fs-wide, jarvis\n"
         "     Lines:   line2, line-checker, line4, line8, line-fs\n"
+        "     Dots:    halftone8, diagonal8, spiral5, hex8, hex5, blue-noise\n"
+        "     Analy:   ign, r2, white-noise, crosshatch, radial, value-noise\n"
+        "     Advanced: ostromoukhov\n"
         "  --dither-strength <float>       Dithering strength 0.0-2.0 (default: 1.0)\n"
         "  --error-clamp <float>           Max error per channel 0.1-2.0 (default: 0.1)\n"
         "  --adaptive <float>              Contrast-adaptive diffusion 0.0-1.0 (default: 0.0)\n"
@@ -177,6 +180,19 @@ Result<Config> parse_args(int argc, char* argv[]) {
                 else if (val == "line4") config.dither_settings.method = dither::Method::line4;
                 else if (val == "line8") config.dither_settings.method = dither::Method::line8;
                 else if (val == "line-fs") config.dither_settings.method = dither::Method::line_fs;
+                else if (val == "halftone8") config.dither_settings.method = dither::Method::halftone8x8;
+                else if (val == "diagonal8") config.dither_settings.method = dither::Method::diagonal8x8;
+                else if (val == "spiral5") config.dither_settings.method = dither::Method::spiral5x5;
+                else if (val == "hex8") config.dither_settings.method = dither::Method::hex8x8;
+                else if (val == "hex5") config.dither_settings.method = dither::Method::hex5x5;
+                else if (val == "blue-noise") config.dither_settings.method = dither::Method::blue_noise;
+                else if (val == "ign") config.dither_settings.method = dither::Method::ign;
+                else if (val == "r2") config.dither_settings.method = dither::Method::r2_sequence;
+                else if (val == "white-noise") config.dither_settings.method = dither::Method::white_noise;
+                else if (val == "crosshatch") config.dither_settings.method = dither::Method::crosshatch;
+                else if (val == "radial") config.dither_settings.method = dither::Method::radial;
+                else if (val == "value-noise") config.dither_settings.method = dither::Method::value_noise;
+                else if (val == "ostromoukhov") config.dither_settings.method = dither::Method::ostromoukhov;
                 else return std::unexpected{Error{ErrorCode::invalid_dimensions, "Unknown dither: " + std::string(val)}};
             } else if (arg == "--dither-strength") {
                 config.dither_settings.strength = std::stof(std::string(val));
@@ -696,14 +712,16 @@ struct RawTerminal {
 };
 
 // Short dither names for display
-constexpr std::array<std::string_view, 23> dither_names = {
+constexpr std::array<std::string_view, 30> dither_names = {
     "none", "bayer4", "bayer8", "checker", "bayer2x2", "h2x4",
     "clustered", "line2", "line-check", "line4", "line8",
     "fs", "atkinson", "sierra", "fs-wide", "jarvis", "line-fs",
     "halftone8", "diagonal8", "spiral5", "hex8", "hex5", "blue-noise",
+    "ign", "r2", "white-noise", "crosshatch", "radial", "value-noise",
+    "ostromoukhov",
 };
 
-constexpr std::array<dither::Method, 23> dither_methods = {
+constexpr std::array<dither::Method, 30> dither_methods = {
     dither::Method::none, dither::Method::bayer4x4, dither::Method::bayer8x8,
     dither::Method::checker, dither::Method::bayer2x2, dither::Method::h2x4,
     dither::Method::clustered_dot, dither::Method::line2,
@@ -714,6 +732,10 @@ constexpr std::array<dither::Method, 23> dither_methods = {
     dither::Method::halftone8x8, dither::Method::diagonal8x8,
     dither::Method::spiral5x5, dither::Method::hex8x8,
     dither::Method::hex5x5, dither::Method::blue_noise,
+    dither::Method::ign, dither::Method::r2_sequence,
+    dither::Method::white_noise, dither::Method::crosshatch,
+    dither::Method::radial, dither::Method::value_noise,
+    dither::Method::ostromoukhov,
 };
 
 std::size_t dither_index(dither::Method m) {

@@ -51,6 +51,19 @@ dither::Method parse_dither(const std::string& s) {
     if (s == "fs-wide") return dither::Method::fs_wide;
     if (s == "jarvis") return dither::Method::jarvis;
     if (s == "line-fs") return dither::Method::line_fs;
+    if (s == "halftone8") return dither::Method::halftone8x8;
+    if (s == "diagonal8") return dither::Method::diagonal8x8;
+    if (s == "spiral5") return dither::Method::spiral5x5;
+    if (s == "hex8") return dither::Method::hex8x8;
+    if (s == "hex5") return dither::Method::hex5x5;
+    if (s == "blue-noise") return dither::Method::blue_noise;
+    if (s == "ign") return dither::Method::ign;
+    if (s == "r2") return dither::Method::r2_sequence;
+    if (s == "white-noise") return dither::Method::white_noise;
+    if (s == "crosshatch") return dither::Method::crosshatch;
+    if (s == "radial") return dither::Method::radial;
+    if (s == "value-noise") return dither::Method::value_noise;
+    if (s == "ostromoukhov") return dither::Method::ostromoukhov;
     return dither::Method::checker;
 }
 
