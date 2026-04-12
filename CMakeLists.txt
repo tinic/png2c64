@@ -76,7 +76,7 @@ function(add_example stem ext)
         set(EX_GAMMA 1.0)
     endif()
     if(NOT DEFINED EX_DITHER_STRENGTH)
-        set(EX_DITHER_STRENGTH 1.0)
+        set(EX_DITHER_STRENGTH 0.7)
     endif()
 
     set(EXTRA_ARGS "")
@@ -95,31 +95,31 @@ function(add_example stem ext)
     )
 endfunction()
 
-add_example(golden3 jpeg GAMMA 2.0 DITHER_STRENGTH 1.5 MATCH_RANGE)
-add_example(monster jpeg GAMMA 3.0 DITHER_STRENGTH 1.5)
-add_example(ship    jpeg GAMMA 2.0 DITHER_STRENGTH 1.5 MATCH_RANGE)
-add_example(dragon  png  GAMMA 1.0 DITHER_STRENGTH 1.5 MATCH_RANGE)
-add_example(fantasy png  GAMMA 1.0 DITHER_STRENGTH 1.5 MATCH_RANGE)
-add_example(dog     png  GAMMA 3.0 DITHER_STRENGTH 1.5)
-add_example(alien   png  GAMMA 1.0 DITHER_STRENGTH 2.0 MATCH_RANGE)
+add_example(golden3 jpeg GAMMA 2.0 DITHER_STRENGTH 0.7 MATCH_RANGE)
+add_example(monster jpeg GAMMA 3.0 DITHER_STRENGTH 0.7)
+add_example(ship    jpeg GAMMA 2.0 DITHER_STRENGTH 0.7 MATCH_RANGE)
+add_example(dragon  png  GAMMA 1.0 DITHER_STRENGTH 0.7 MATCH_RANGE)
+add_example(fantasy png  GAMMA 1.0 DITHER_STRENGTH 0.7 MATCH_RANGE)
+add_example(dog     png  GAMMA 3.0 DITHER_STRENGTH 0.7)
+add_example(alien   png  GAMMA 1.0 DITHER_STRENGTH 0.7 MATCH_RANGE)
 add_test(
     NAME "convert-face"
     COMMAND png2c64
         --gamma 3.0
-        --dither-strength 1.0
+        --dither-strength 0.7
         --sharpen -0.5
         --saturation 0.5
         "${EXAMPLES_DIR}/face.png"
         "${EXAMPLES_DIR}/face-c64.png"
 )
-add_example(game    png  GAMMA 2.0 DITHER_STRENGTH 1.5)
+add_example(game    png  GAMMA 2.0 DITHER_STRENGTH 0.7)
 
 add_test(
     NAME "convert-head-petscii"
     COMMAND png2c64
         --mode petscii
         --gamma 3.3
-        --dither-strength 1.6
+        --dither-strength 0.7
         --black-point 0.09
         --white-point 0.06
         "${EXAMPLES_DIR}/head.png"
@@ -135,7 +135,7 @@ add_test(
     NAME "mode-hires"
     COMMAND png2c64
         --mode hires
-        --gamma 2.0 --dither-strength 1.5 --match-range
+        --gamma 2.0 --dither-strength 0.7 --match-range
         "${EXAMPLES_DIR}/dragon.png"
         "${EXAMPLES_DIR}/dragon-hires.png"
 )
@@ -147,7 +147,7 @@ add_test(
     NAME "mode-fli"
     COMMAND png2c64
         --mode fli
-        --gamma 2.0 --dither-strength 1.5 --match-range
+        --gamma 2.0 --dither-strength 0.7 --match-range
         "${EXAMPLES_DIR}/dragon.png"
         "${EXAMPLES_DIR}/dragon-fli.png"
 )
@@ -159,7 +159,7 @@ add_test(
     NAME "mode-afli"
     COMMAND png2c64
         --mode afli
-        --gamma 2.0 --dither-strength 1.5 --match-range
+        --gamma 2.0 --dither-strength 0.7 --match-range
         "${EXAMPLES_DIR}/dragon.png"
         "${EXAMPLES_DIR}/dragon-afli.png"
 )
@@ -195,7 +195,7 @@ add_test(
     NAME "mode-charset-hi"
     COMMAND png2c64
         --mode charset-hi
-        --gamma 3.3 --dither-strength 1.6
+        --gamma 3.3 --dither-strength 0.7
         --black-point 0.09 --white-point 0.06
         "${EXAMPLES_DIR}/head.png"
         "${EXAMPLES_DIR}/head-charset-hi.png"
@@ -208,7 +208,7 @@ add_test(
     NAME "mode-charset-mc"
     COMMAND png2c64
         --mode charset-mc
-        --gamma 3.3 --dither-strength 1.6
+        --gamma 3.3 --dither-strength 0.7
         --black-point 0.09 --white-point 0.06
         "${EXAMPLES_DIR}/head.png"
         "${EXAMPLES_DIR}/head-charset-mc.png"
@@ -223,7 +223,7 @@ add_test(
     NAME "charset-mc-color-range"
     COMMAND png2c64
         --mode charset-mc
-        --gamma 3.3 --dither-strength 1.6
+        --gamma 3.3 --dither-strength 0.7
         --black-point 0.09 --white-point 0.06
         "${EXAMPLES_DIR}/head.png"
         "${EXAMPLES_DIR}/head-charset-mc.h"
@@ -239,7 +239,7 @@ set_tests_properties("charset-mc-color-range" PROPERTIES
 add_test(
     NAME "error-multicolor-dragon"
     COMMAND png2c64
-        --gamma 1.0 --dither-strength 1.5 --match-range
+        --gamma 1.0 --dither-strength 0.7 --match-range
         "${EXAMPLES_DIR}/dragon.png"
         "${EXAMPLES_DIR}/dragon-c64.png"
 )
@@ -250,7 +250,7 @@ add_test(
     NAME "error-hires-dragon"
     COMMAND png2c64
         --mode hires
-        --gamma 2.0 --dither-strength 1.5 --match-range
+        --gamma 2.0 --dither-strength 0.7 --match-range
         "${EXAMPLES_DIR}/dragon.png"
         "${EXAMPLES_DIR}/dragon-hires.png"
 )
@@ -263,7 +263,7 @@ add_test(
     NAME "error-fli-dragon"
     COMMAND png2c64
         --mode fli
-        --gamma 2.0 --dither-strength 1.5 --match-range
+        --gamma 2.0 --dither-strength 0.7 --match-range
         "${EXAMPLES_DIR}/dragon.png"
         "${EXAMPLES_DIR}/dragon-fli.png"
 )
@@ -276,7 +276,7 @@ set_tests_properties("error-fli-dragon" PROPERTIES
 add_test(
     NAME "prg-multicolor"
     COMMAND png2c64
-        --gamma 1.0 --dither-strength 1.5 --match-range
+        --gamma 1.0 --dither-strength 0.7 --match-range
         "${EXAMPLES_DIR}/dragon.png"
         "${EXAMPLES_DIR}/dragon-c64.png"
 )
@@ -287,7 +287,7 @@ add_test(
     NAME "prg-hires"
     COMMAND png2c64
         --mode hires
-        --gamma 2.0 --dither-strength 1.5
+        --gamma 2.0 --dither-strength 0.7
         "${EXAMPLES_DIR}/dragon.png"
         "${EXAMPLES_DIR}/dragon-hires.png"
 )
@@ -298,7 +298,7 @@ add_test(
     NAME "prg-charset-hi"
     COMMAND png2c64
         --mode charset-hi
-        --gamma 3.3 --dither-strength 1.6
+        --gamma 3.3 --dither-strength 0.7
         "${EXAMPLES_DIR}/head.png"
         "${EXAMPLES_DIR}/head-charset-hi.h"
 )
@@ -309,7 +309,7 @@ add_test(
     NAME "prg-charset-mc"
     COMMAND png2c64
         --mode charset-mc
-        --gamma 3.3 --dither-strength 1.6
+        --gamma 3.3 --dither-strength 0.7
         "${EXAMPLES_DIR}/head.png"
         "${EXAMPLES_DIR}/head-charset-mc.h"
 )
@@ -320,7 +320,7 @@ add_test(
     NAME "prg-fli"
     COMMAND png2c64
         --mode fli
-        --gamma 2.0 --dither-strength 1.5
+        --gamma 2.0 --dither-strength 0.7
         "${EXAMPLES_DIR}/dragon.png"
         "${EXAMPLES_DIR}/dragon-fli.png"
 )
@@ -331,7 +331,7 @@ add_test(
     NAME "prg-afli"
     COMMAND png2c64
         --mode afli
-        --gamma 2.0 --dither-strength 1.5
+        --gamma 2.0 --dither-strength 0.7
         "${EXAMPLES_DIR}/dragon.png"
         "${EXAMPLES_DIR}/dragon-afli.png"
 )
@@ -343,7 +343,7 @@ add_test(
     NAME "mode-charset-mixed"
     COMMAND png2c64
         --mode charset-mixed
-        --gamma 3.3 --dither-strength 1.6
+        --gamma 3.3 --dither-strength 0.7
         --black-point 0.09 --white-point 0.06
         "${EXAMPLES_DIR}/head.png"
         "${EXAMPLES_DIR}/head-charset-mixed.png"
@@ -355,7 +355,7 @@ add_test(
     NAME "prg-charset-mixed"
     COMMAND png2c64
         --mode charset-mixed
-        --gamma 3.3 --dither-strength 1.6
+        --gamma 3.3 --dither-strength 0.7
         "${EXAMPLES_DIR}/head.png"
         "${EXAMPLES_DIR}/head-charset-mixed.h"
 )
@@ -366,7 +366,7 @@ add_test(
     NAME "prg-petscii"
     COMMAND png2c64
         --mode petscii
-        --gamma 3.3 --dither-strength 1.6
+        --gamma 3.3 --dither-strength 0.7
         "${EXAMPLES_DIR}/head.png"
         "${EXAMPLES_DIR}/head-petscii.png"
 )

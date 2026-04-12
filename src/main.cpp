@@ -82,7 +82,7 @@ void print_usage() {
         "     Dots:    halftone8, diagonal8, spiral5, hex8, hex5, blue-noise\n"
         "     Analy:   ign, r2, white-noise, crosshatch, radial, value-noise\n"
         "     Advanced: ostromoukhov\n"
-        "  --dither-strength <float>       Dithering strength 0.0-2.0 (default: 1.0)\n"
+        "  --dither-strength <float>       Dithering strength 0.0-2.0 (default: 0.7)\n"
         "  --error-clamp <float>           Max error per channel 0.1-2.0 (default: 0.1)\n"
         "  --adaptive <float>              Contrast-adaptive diffusion 0.0-1.0 (default: 0.0)\n"
         "  --no-serpentine                  Disable serpentine scanning\n"
@@ -497,8 +497,8 @@ constexpr std::array dither_strength_gallery = {
     FloatGalleryEntry{0.00f, "dither-strength = 0.00 (off)"},
     FloatGalleryEntry{0.25f, "dither-strength = 0.25"},
     FloatGalleryEntry{0.50f, "dither-strength = 0.50"},
-    FloatGalleryEntry{0.75f, "dither-strength = 0.75"},
-    FloatGalleryEntry{1.00f, "dither-strength = 1.00 (default)"},
+    FloatGalleryEntry{0.70f, "dither-strength = 0.70 (default)"},
+    FloatGalleryEntry{1.00f, "dither-strength = 1.00"},
     FloatGalleryEntry{1.25f, "dither-strength = 1.25"},
     FloatGalleryEntry{1.50f, "dither-strength = 1.50"},
     FloatGalleryEntry{2.00f, "dither-strength = 2.00"},

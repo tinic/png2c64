@@ -15,7 +15,7 @@ struct Options {
     float brightness = 0.0f;
     float contrast = 1.0f;
     float saturation = 1.0f;
-    float dither_strength = 1.0f;
+    float dither_strength = 0.7f;
     float error_clamp = 0.1f;
     float adaptive = 0.0f;
     float hue_shift = 0.0f;

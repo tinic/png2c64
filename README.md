@@ -41,7 +41,7 @@ Built for C64 demo scene production. All color operations use [OKLab](https://bo
 
 ## Dither Modes
 
-All 17 modes shown with `--gamma 1 --dither-strength 2 --error-clamp 0.2`. Click to expand:
+All 17 modes shown with `--gamma 1 --dither-strength 0.7 --error-clamp 0.2`. Click to expand:
 
 <details open><summary><b>none</b> — no dithering</summary>
 <img src="examples/dither_gallery/none.png" width="640">
@@ -174,7 +174,7 @@ png2c64 --mode afli input.jpg output.png   # hires FLI, per-row colors
 ### PETSCII
 ```bash
 # Uses C64 ROM charset to approximate the image in text mode
-png2c64 --mode petscii --gamma 3.3 --dither-strength 1.6 input.jpg output.png
+png2c64 --mode petscii --gamma 3.3 --dither-strength 0.7 input.jpg output.png
 ```
 
 ### Character set
@@ -239,7 +239,7 @@ Gallery and interactive work with all modes including charset.
   Square-pixel:            none, bayer4, bayer8, fs, atkinson, sierra
   2:1 multicolor:          checker, bayer2x2, h2x4, clustered, fs-wide, jarvis
   Horizontal lines:        line2, line-checker, line4, line8, line-fs
---dither-strength <float>  0.0-2.0 (default: 1.0)
+--dither-strength <float>  0.0-2.0 (default: 0.7)
 --error-clamp <float>      Max error accumulation 0.1-2.0 (default: 0.8)
 --no-serpentine            Disable bidirectional scanning
 --brightness <float>       -1.0 to 1.0 (default: 0.0)
