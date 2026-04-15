@@ -104,9 +104,9 @@ export const DIFFUSION_SLIDERS = [
 // PETSCII-only per-cell error metric. Shown only when mode === 'petscii'.
 // blur and ssim use the continuous source and skip pixel-level dither.
 export const PETSCII_METRICS = [
+  { value: 'mse',  label: 'Per-pixel MSE' },
   { value: 'blur', label: 'Pappas-Neuhoff' },
   { value: 'ssim', label: 'SSIM' },
-  { value: 'mse',  label: 'Per-pixel MSE' },
 ]
 export const PETSCII_DEFAULTS = {
   metric: 'mse',
