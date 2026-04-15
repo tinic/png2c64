@@ -16,7 +16,7 @@ Built for C64 demo scene production. All color operations use [OKLab](https://bo
 |---|---|---|
 | Color matching | OKLab perceptual space | RGB euclidean |
 | Dither-aware quantization | Yes — picks colors that dither well together | No — picks nearest colors, then dithers |
-| Dithering modes | 17 (ordered, error diffusion, line-based, 2:1-aware) | 1-3 |
+| Dithering modes | 30 (ordered, error diffusion, line-based, 2:1-aware, halftone, analytical) | 1-3 |
 | Preprocessing | OKLab contrast/saturation/hue, sharpen, levels | Basic RGB |
 | Interactive tuning | CLI + web with live preview | Batch only |
 | Palette range matching | Automatic OKLab extent mapping | Manual |
@@ -41,7 +41,7 @@ Built for C64 demo scene production. All color operations use [OKLab](https://bo
 
 ## Dither Modes
 
-All 17 modes shown with `--gamma 1 --dither-strength 0.7 --error-clamp 0.2`. Click to expand:
+All 30 modes shown with `--gamma 1 --dither-strength 0.7 --error-clamp 0.2`. Click to expand:
 
 <details open><summary><b>none</b> — no dithering</summary>
 <img src="examples/dither_gallery/none.png" width="640">
@@ -111,6 +111,58 @@ All 17 modes shown with `--gamma 1 --dither-strength 0.7 --error-clamp 0.2`. Cli
 <img src="examples/dither_gallery/line-fs.png" width="640">
 </details>
 
+<details><summary><b>ostromoukhov</b> — variable-coefficient error diffusion</summary>
+<img src="examples/dither_gallery/ostromoukhov.png" width="640">
+</details>
+
+<details><summary><b>halftone8</b> — 8×8 45° clustered dot halftone</summary>
+<img src="examples/dither_gallery/halftone8.png" width="640">
+</details>
+
+<details><summary><b>diagonal8</b> — 8×8 diagonal clustered dot</summary>
+<img src="examples/dither_gallery/diagonal8.png" width="640">
+</details>
+
+<details><summary><b>spiral5</b> — 5×5 spiral clustered dot</summary>
+<img src="examples/dither_gallery/spiral5.png" width="640">
+</details>
+
+<details><summary><b>hex8</b> — 8×8 hexagonal tiling</summary>
+<img src="examples/dither_gallery/hex8.png" width="640">
+</details>
+
+<details><summary><b>hex5</b> — 5×5 hexagonal tiling</summary>
+<img src="examples/dither_gallery/hex5.png" width="640">
+</details>
+
+<details><summary><b>blue-noise</b> — 64×64 precomputed blue noise</summary>
+<img src="examples/dither_gallery/blue-noise.png" width="640">
+</details>
+
+<details><summary><b>ign</b> — Interleaved Gradient Noise (analytical)</summary>
+<img src="examples/dither_gallery/ign.png" width="640">
+</details>
+
+<details><summary><b>r2</b> — Martin Roberts R2 low-discrepancy sequence</summary>
+<img src="examples/dither_gallery/r2.png" width="640">
+</details>
+
+<details><summary><b>white-noise</b> — per-pixel random hash</summary>
+<img src="examples/dither_gallery/white-noise.png" width="640">
+</details>
+
+<details><summary><b>crosshatch</b> — pen-and-ink crosshatching</summary>
+<img src="examples/dither_gallery/crosshatch.png" width="640">
+</details>
+
+<details><summary><b>radial</b> — concentric circles</summary>
+<img src="examples/dither_gallery/radial.png" width="640">
+</details>
+
+<details><summary><b>value-noise</b> — coherent organic noise</summary>
+<img src="examples/dither_gallery/value-noise.png" width="640">
+</details>
+
 ## Features
 
 - **Bitmap modes** -- hires (320x200, 2 colors/cell) and multicolor (160x200, 4 colors/cell)
@@ -119,7 +171,7 @@ All 17 modes shown with `--gamma 1 --dither-strength 0.7 --error-clamp 0.2`. Cli
 - **Sprite sheets** -- hires and multicolor, arbitrary grid dimensions
 - **Character sets** -- 256-char charset generation with dedup, pattern merging, k-means refinement, and C header export
 - **7 VIC-II palettes** -- Pepto, VICE, Colodore, Deekay, Godot, C64 Wiki, Levy
-- **17 dither modes** -- ordered (Bayer, checker, clustered dot, horizontal lines) and error diffusion (Floyd-Steinberg, Atkinson, Jarvis), including 2:1 pixel-ratio and line-biased variants
+- **30 dither modes** -- ordered (Bayer, checker, clustered dot, horizontal lines), halftone / non-rectangular (halftone8x8, spiral5x5, hex8x8), analytical (IGN, R2, blue noise, crosshatch, radial, value noise), error diffusion (Floyd-Steinberg, Atkinson, Sierra, Jarvis, Ostromoukhov), including 2:1 pixel-ratio and line-biased variants
 - **Perceptual preprocessing** -- OKLab-space contrast/saturation/brightness/gamma, plus automatic palette range matching
 - **Interactive mode** -- live parameter tuning in the terminal with instant preview (iTerm2)
 - **Gallery mode** -- preview all dither methods or parameter sweeps inline in the terminal (iTerm2)
