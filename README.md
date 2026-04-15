@@ -4,11 +4,9 @@
 [![Web App](https://img.shields.io/badge/Try_it-png2c64.app-brightgreen)](https://png2c64.app)
 [![C++26](https://img.shields.io/badge/C%2B%2B-26-blue.svg)](https://en.cppreference.com/w/cpp/26)
 
-Convert images to Commodore 64 VIC-II formats with perceptual color matching, dithering, and brute-force quantization.
+Convert images to Commodore 64 VIC-II formats.
 
-**[Try it in your browser at png2c64.app](https://png2c64.app)** — no installation required, runs entirely client-side via WebAssembly.
-
-Built for C64 demo scene production. All color operations use [OKLab](https://bottosson.github.io/posts/oklab/) perceptual color space. Multithreaded native CLI + WASM web app.
+Color operations in [OKLab](https://bottosson.github.io/posts/oklab/). Native CLI (multithreaded) and in-browser version at **[png2c64.app](https://png2c64.app)** (WASM).
 
 ## Examples
 
@@ -151,34 +149,40 @@ All 30 modes shown with `--gamma 1 --dither-strength 0.7 --error-clamp 0.2`. Cli
 
 ## Features
 
-- **Bitmap modes** -- hires (320x200, 2 colors/cell) and multicolor (160x200, 4 colors/cell)
-- **FLI modes** -- FLI multicolor and AFLI hires with per-row color attributes, PRG export with displayer
-- **PETSCII mode** -- image approximation using the C64's built-in 256-character ROM, brute-force best character + color per cell
-- **Sprite sheets** -- hires and multicolor, arbitrary grid dimensions
-- **Character sets** -- 256-char charset generation with dedup, pattern merging, k-means refinement, and C header export
-- **7 VIC-II palettes** -- Pepto, VICE, Colodore, Deekay, Godot, C64 Wiki, Levy
-- **30 dither modes** -- ordered (Bayer, checker, clustered dot, horizontal lines), halftone / non-rectangular (halftone8x8, spiral5x5, hex8x8), analytical (IGN, R2, blue noise, crosshatch, radial, value noise), error diffusion (Floyd-Steinberg, Atkinson, Sierra, Jarvis, Ostromoukhov), including 2:1 pixel-ratio and line-biased variants
-- **Perceptual preprocessing** -- OKLab-space contrast/saturation/brightness/gamma, plus automatic palette range matching
-- **Interactive mode** -- live parameter tuning in the terminal with instant preview (iTerm2)
-- **Gallery mode** -- preview all dither methods or parameter sweeps inline in the terminal (iTerm2)
-- **C header export** -- charset data, screen map, and color RAM as includable arrays
+- **Bitmap modes**: hires (320×200, 2 colors/cell), multicolor (160×200, 4 colors/cell)
+- **FLI / AFLI**: per-row color attributes, PRG export with displayer
+- **PETSCII**: image approximation using the C64 ROM character set (brute-force glyph + fg/bg per cell)
+- **Sprite sheets**: hires / multicolor, arbitrary grid dimensions
+- **Character sets**: hires, multicolor, and mixed; dedup, pattern merging, k-means refinement, C header export
+- **7 VIC-II palettes**: Pepto, VICE, Colodore, Deekay, Godot, C64 Wiki, Levy
+- **30 dither methods**: ordered (Bayer, checker, clustered, line), halftone/non-rectangular (halftone8×8, spiral5×5, hex8×8), analytical (IGN, R2, blue noise, crosshatch, radial, value noise), error diffusion (Floyd-Steinberg, Atkinson, Sierra, Jarvis, Ostromoukhov), 2:1 and line-biased variants
+- **Preprocessing**: OKLab brightness/contrast/saturation/gamma/hue, sharpen/blur, black/white point clipping, automatic palette-range matching
+- **Per-cell metric**: MSE (default), Pappas-Neuhoff blur, or Wang SSIM — useful for PETSCII and charset modes
+- **Interactive mode** (iTerm2, POSIX): live parameter tuning with inline preview
+- **Gallery mode** (iTerm2): inline previews of dither or parameter sweeps
+- **Export**: PNG preview, PRG with embedded displayer (bitmap / FLI / AFLI / PETSCII), Koala and Art Studio raw, C header (charset / sprite / PETSCII data)
 
 ## Requirements
 
 - GCC 15+ (uses C++26 / `-std=c++2c`)
 - CMake 3.28+
-- macOS or Linux
+- macOS, Linux, or Windows (MSYS2 UCRT64)
+
+Prebuilt Linux / macOS / Windows binaries are attached to each [GitHub release](https://github.com/tinic/png2c64/releases).
 
 ## Build
 
 ```bash
 cmake -B build -DCMAKE_C_COMPILER=gcc-15 -DCMAKE_CXX_COMPILER=g++-15 .
-cmake --build build
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
 ```
 
-Run tests:
+On Windows, the same commands work under MSYS2 UCRT64 (`mingw-w64-ucrt-x86_64-gcc`, `mingw-w64-ucrt-x86_64-cmake`).
+
+Check the build number:
 ```bash
-ctest --test-dir build --output-on-failure
+./build/png2c64 --version
 ```
 
 ## Usage
@@ -260,7 +264,7 @@ png2c64 --gallery dither input.jpg
 png2c64 --gallery gamma input.jpg
 
 # Available: dither, brightness, contrast, saturation, gamma,
-#            error-clamp, dither-strength
+#            error-clamp, dither-strength, adaptive
 ```
 
 Gallery and interactive work with all modes including charset.
@@ -269,28 +273,49 @@ Gallery and interactive work with all modes including charset.
 
 ```
 --mode <mode>              hires, multicolor, fli, afli, petscii,
-                           sprite-hi, sprite-mc, charset-hi, charset-mc
+                           sprite-hi, sprite-mc,
+                           charset-hi, charset-mc, charset-mixed
                            (default: multicolor)
 --palette <name>           pepto, vice, colodore, deekay, godot,
-                           c64wiki, levy  (default: colodore)
+                           c64wiki, levy (default: colodore)
 --dither <method>          Dithering method (default: checker)
-  Square-pixel:            none, bayer4, bayer8, fs, atkinson, sierra
-  2:1 multicolor:          checker, bayer2x2, h2x4, clustered, fs-wide, jarvis
-  Horizontal lines:        line2, line-checker, line4, line8, line-fs
---dither-strength <float>  0.0-2.0 (default: 0.7)
---error-clamp <float>      Max error accumulation 0.1-2.0 (default: 0.8)
---no-serpentine            Disable bidirectional scanning
---brightness <float>       -1.0 to 1.0 (default: 0.0)
---contrast <float>         0.0 to 2.0 (default: 1.0)
---saturation <float>       0.0 to 2.0 (default: 1.0)
---gamma <float>            0.1 to 8.0 (default: 1.5)
---match-range              Enable palette range matching (default: off)
---width <int>              Override target width
---height <int>             Override target height
+  Square-pixel ordered:    none, bayer4, bayer8
+  2:1 multicolor ordered:  checker, bayer2x2, h2x4, clustered
+  Horizontal lines:        line2, line-checker, line4, line8
+  Halftone / analytical:   halftone8, diagonal8, spiral5, hex8, hex5,
+                           blue-noise, ign, r2, white-noise,
+                           crosshatch, radial, value-noise
+  Error diffusion:         fs, atkinson, sierra, fs-wide, jarvis,
+                           line-fs, ostromoukhov
+--dither-strength <float>  0.0–2.0 (default: 0.7)
+--error-clamp <float>      Max error per OKLab channel (default: 0.1)
+--adaptive <float>         Contrast-adaptive error diffusion 0.0–1.0
+                           (default: 0.0; reduces dither in detail,
+                           keeps it in flat areas)
+--no-serpentine            Disable serpentine error-diffusion scan
+--match-range              OKLab extent → palette extent remapping
+--brightness <float>       –1.0 to 1.0 (default: 0.0)
+--contrast <float>         0.0–2.0 (default: 1.0)
+--saturation <float>       0.0–2.0 (default: 1.0)
+--gamma <float>            0.1–8.0 (default: 1.5)
+--hue-shift <float>        –180 to 180 degrees (default: 0)
+--sharpen <float>          –1 to 2 (negative blurs, positive sharpens)
+--black-point <float>      0.0–0.4 (clip darkest fraction)
+--white-point <float>      0.0–0.4 (clip brightest fraction)
+--metric mse|blur|ssim     Per-cell error metric. MSE is the default
+                           and pairs with dither; blur / ssim score
+                           against the continuous source (useful for
+                           PETSCII and charset modes).
+--graphics-only            PETSCII: restrict to graphics glyphs (no text)
+--width <int>              Override output width
+--height <int>             Override output height
 --sprites-x <int>          Sprite sheet columns (default: 1)
 --sprites-y <int>          Sprite sheet rows (default: 1)
---gallery <param>          Preview parameter variations in terminal
---interactive              Live parameter tuning with instant preview
+--gallery <param>          dither | brightness | contrast | saturation |
+                           gamma | error-clamp | dither-strength |
+                           adaptive
+--interactive              Live parameter tuning (iTerm2, POSIX only)
+--version                  Print version and exit
 ```
 
 ## How it works
@@ -353,7 +378,7 @@ src/
   scale.hpp/.cpp     Bicubic scaling
   preprocess.hpp/.cpp  Color adjustments + OKLab range matching
   quantize.hpp/.cpp  Brute-force quantization (multithreaded)
-  dither.hpp/.cpp    17 dither algorithms (OKLab)
+  dither.hpp/.cpp    30 dither algorithms (OKLab)
   charset.hpp/.cpp   Charset conversion + C header export
   petscii_rom.hpp    C64 character ROM (256 chars, precomputed bit tables)
   prg.hpp/.cpp       PRG export with embedded displayers
