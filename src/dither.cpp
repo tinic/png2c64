@@ -763,24 +763,6 @@ constexpr std::array fs_wide_kernel = {
     DiffusionEntry{ 1, 1, 2.0f / 16.0f},
 };
 
-// Strongly vertical FS for multicolor (2:1 pixel ratio).
-// Each logical pixel displays as 2 screen pixels wide, so a horizontal
-// neighbour sits 2 screen units away while a vertical neighbour sits 1.
-// Pushing most of the error down (and into y+2 for finer gradation)
-// produces a far more balanced screen-space diffusion than the classic
-// FS kernel — smoother vertical gradients in multicolor without the
-// horizontal "smearing" that even fs-wide retains.
-//
-//                 *    2/16
-//     2/16      6/16     2/16
-//               4/16
-constexpr std::array fs_tall_kernel = {
-    DiffusionEntry{ 1, 0, 2.0f / 16.0f},
-    DiffusionEntry{-1, 1, 2.0f / 16.0f},
-    DiffusionEntry{ 0, 1, 6.0f / 16.0f},
-    DiffusionEntry{ 1, 1, 2.0f / 16.0f},
-    DiffusionEntry{ 0, 2, 4.0f / 16.0f},
-};
 
 // Jarvis-Judice-Ninke: wider 5x3 kernel, distributes error over more pixels.
 // The larger reach naturally handles 2:1 ratio better -- more vertical taps
@@ -930,12 +912,6 @@ void apply(const Image& image, quantize::ScreenResult& result,
                               settings.strength, settings.error_clamp,
                               settings.serpentine, settings.adaptive,
                               fs_wide_kernel);
-        return;
-    case Method::fs_tall:
-        apply_error_diffusion(image, result, palette, params,
-                              settings.strength, settings.error_clamp,
-                              settings.serpentine, settings.adaptive,
-                              fs_tall_kernel);
         return;
     case Method::jarvis:
         apply_error_diffusion(image, result, palette, params,

@@ -47,7 +47,6 @@ export const DITHER_METHODS = [
   ]},
   { group: 'Error Diffusion (2:1)', items: [
     { value: 'fs-wide', label: 'F-S Wide' },
-    { value: 'fs-tall', label: 'F-S Tall (vertical-biased)' },
     { value: 'jarvis', label: 'Jarvis' },
   ]},
   { group: 'Error Diffusion (line)', items: [
@@ -156,7 +155,7 @@ export function isCharsetMode(mode) {
   return mode === 'charset-hi' || mode === 'charset-mc' || mode === 'charset-mixed'
 }
 
-const ERROR_DIFFUSION = new Set(['fs', 'atkinson', 'sierra', 'fs-wide', 'fs-tall', 'jarvis', 'line-fs', 'ostromoukhov'])
+const ERROR_DIFFUSION = new Set(['fs', 'atkinson', 'sierra', 'fs-wide', 'jarvis', 'line-fs', 'ostromoukhov'])
 
 export function isErrorDiffusion(dither) {
   return ERROR_DIFFUSION.has(dither)
