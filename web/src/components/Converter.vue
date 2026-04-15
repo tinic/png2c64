@@ -15,7 +15,7 @@ import ProgressSpinner from 'primevue/progressspinner'
 import FileUpload from 'primevue/fileupload'
 import Panel from 'primevue/panel'
 
-const { loading: wasmLoading, error: wasmError, convertRGBA, convertPNG, convertPRG, convertHeader, convertRaw } = useWasm()
+const { loading: wasmLoading, error: wasmError, convertRGBA, convertErrorMapRGBA, convertPNG, convertPRG, convertHeader, convertRaw } = useWasm()
 const { imageBytes, imageName, imageUrl, dragOver, uploadTimestamp, onDrop, onDragOver, onDragLeave, openPicker } = useImageUpload()
 
 const showUploadHint = ref(true)
@@ -41,6 +41,7 @@ const options = reactive(defaultOptions())
 const canvasRef = ref(null)
 const converting = ref(false)
 const crtEnabled = ref(false)
+const errorMapEnabled = ref(false)
 const resultInfo = ref('')
 const errorMsg = ref('')
 
@@ -110,7 +111,9 @@ function doConvert() {
 
     const t0 = performance.now()
     try {
-      const result = await convertRGBA(imageBytes.value, buildWasmOptions())
+      const result = errorMapEnabled.value
+        ? await convertErrorMapRGBA(imageBytes.value, buildWasmOptions())
+        : await convertRGBA(imageBytes.value, buildWasmOptions())
 
       if (result.error) {
         errorMsg.value = result.error
@@ -144,7 +147,7 @@ function doConvert() {
       tmpCtx.putImageData(imgData, 0, 0)
       ctx.drawImage(tmp, 0, 0, dw, dh)
 
-      if (crtEnabled.value) {
+      if (crtEnabled.value && !errorMapEnabled.value) {
         applyCRT(ctx, dw, dh)
       }
 
@@ -175,13 +178,14 @@ function doConvert() {
   }, 150)
 }
 
-watch([imageBytes, crtEnabled, () => ({ ...options })], doConvert, { deep: true })
+watch([imageBytes, crtEnabled, errorMapEnabled, () => ({ ...options })], doConvert, { deep: true })
 
 // Track individual setting changes
 watch(() => options.mode, (to, from) => { if (from !== undefined) track('mode-change', { from, to }) })
 watch(() => options.palette, (to, from) => { if (from !== undefined) track('palette-change', { from, to }) })
 watch(() => options.dither, (to, from) => { if (from !== undefined) track('dither-change', { from, to }) })
 watch(crtEnabled, (val) => { track('crt-toggle', { enabled: val }) })
+watch(errorMapEnabled, (val) => { track('error-map-toggle', { enabled: val }) })
 
 // Track slider tweaks (debounced — fires after the user stops dragging)
 let tweakTimer = null
@@ -629,6 +633,11 @@ function onFileSelect(event) {
               <span class="text-xs text-color-secondary">{{ resultInfo }}</span>
               <div class="flex align-items-center gap-2">
                 <span v-if="errorMsg" class="text-xs text-red-400">{{ errorMsg }}</span>
+                <label class="flex align-items-center gap-1 text-xs text-color-secondary cursor-pointer"
+                  title="Per-pixel OKLab error heatmap. Black = exact match, red/yellow/white = increasing fidelity loss. Useful for spotting regions to overlay sprites.">
+                  <ToggleSwitch v-model="errorMapEnabled" />
+                  Error map
+                </label>
                 <label class="flex align-items-center gap-1 text-xs text-color-secondary cursor-pointer"
                   title="Simulate CRT display with scanlines, phosphor bloom, color fringing, and vignette. Display-only.">
                   <ToggleSwitch v-model="crtEnabled" />
