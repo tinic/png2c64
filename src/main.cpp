@@ -395,7 +395,7 @@ void run_pipeline_and_display(const Image& scaled_image,
     auto screen = quantize::quantize(img, pal, mode, params, tfn, ds.strength);
     if (!screen) return;
 
-    if (ds.method != dither::Method::none) {
+    if (ds.method != dither::Method::none && !dither::is_ordered(ds.method)) {
         dither::apply(img, *screen, pal, params, ds);
     }
 
@@ -550,7 +550,7 @@ void run_dither_gallery_bitmap(const Image& image,
         dither::Settings settings = base_settings;
         settings.method = method;
 
-        if (method != dither::Method::none) {
+        if (method != dither::Method::none && !dither::is_ordered(method)) {
             dither::apply(image, screen_copy, pal, params, settings);
         }
 
@@ -805,7 +805,7 @@ void run_interactive(const Image& scaled_image, Config& config,
             auto screen = quantize::quantize(img, pal, mode, params,
                                               tfn, ds.strength);
             if (!screen) return;
-            if (ds.method != dither::Method::none)
+            if (ds.method != dither::Method::none && !dither::is_ordered(ds.method))
                 dither::apply(img, *screen, pal, params, ds);
             output = render_screen(*screen, pal, params);
         }
@@ -952,7 +952,7 @@ void run_interactive(const Image& scaled_image, Config& config,
                     auto screen = quantize::quantize(img, pal, mode, params,
                                                       tfn, ds.strength);
                     if (screen) {
-                        if (ds.method != dither::Method::none)
+                        if (ds.method != dither::Method::none && !dither::is_ordered(ds.method))
                             dither::apply(img, *screen, pal, params, ds);
                         auto out = render_screen(*screen, pal, params);
                         png_io::save(config.output_path, out);
@@ -1217,12 +1217,16 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // Post-quantize dither only composes with the MSE metric — blur
-    // and ssim score against the continuous source (with ordered-dither
-    // threshold bias already applied inside quantize), and an extra
-    // error-diffusion pass on top would fight that selection.
+    // Post-quantize dither only for error-diffusion methods. Ordered
+    // methods feed their threshold into `quantize` via the threshold
+    // fn, which bakes the dither pattern into `pixel_indices` at
+    // per-pixel-nearest selection time. Running `apply_ordered_matrix`
+    // on top re-derives a pattern using a *different* rule (perceptual
+    // blend of the two nearest cell colours) that forces dither even
+    // on pixels that are already clearly closer to one colour —
+    // adding speckle/noise on smooth areas. Skip it.
     if (config->dither_settings.method != dither::Method::none &&
-        config->metric == quantize::Metric::mse) {
+        !dither::is_ordered(config->dither_settings.method)) {
         std::println("Dithering...");
         dither::apply(*image, *screen, pal, params, config->dither_settings);
     }

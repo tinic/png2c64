@@ -533,12 +533,7 @@ void apply_ostromoukhov(
     auto h = params.screen_height;
     auto cx = params.screen_width / params.cell_width;
 
-    auto cell_colors_count = params.colors_per_cell;
     float ec = error_clamp_val;
-    if (cell_colors_count > 0 && cell_colors_count <= 64) {
-        ec = error_clamp_val *
-             std::sqrt(static_cast<float>(cell_colors_count) / 32.0f);
-    }
 
     std::vector<OKLab> image_lab(w * h);
     for (std::size_t y = 0; y < h; ++y)
@@ -642,17 +637,13 @@ void apply_error_diffusion(
     auto h = params.screen_height;
     auto cx = params.screen_width / params.cell_width;
 
-    // Adaptive error clamp: tighter for sparse cell palettes.  C64 cells
-    // have only 2 (hires) or 4 (multicolor) effective colors — the current
-    // fixed 0.12 clamp lets error accumulate far beyond what those cells
-    // can represent, causing blotchy output.  Scale to cell palette size
-    // relative to 32 (reference palette size for 0.12 clamp).
-    auto cell_colors = params.colors_per_cell;  // 2 for hires, 4 for multicolor
+    // --error-clamp value used directly. Previously scaled by
+    // sqrt(cell_colors/32) which clamped the effective value to ~0.35× of
+    // what the user set for multicolor (4 colours). The scaling made it
+    // impossible to get diffusion across wide gradients even at the
+    // maximum CLI value — error saturated at the clamp in 1-2 steps and
+    // never made it across cell palette boundaries.
     float ec = error_clamp_val;
-    if (cell_colors > 0 && cell_colors <= 64) {
-        ec = error_clamp_val *
-             std::sqrt(static_cast<float>(cell_colors) / 32.0f);
-    }
     error_clamp_val = ec;
 
     std::vector<OKLab> image_lab(w * h);

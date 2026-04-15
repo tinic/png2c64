@@ -227,7 +227,7 @@ Result<PipelineResult> run_pipeline(const std::uint8_t* input_data,
     // Post-quantize dithering only makes sense with the MSE metric — blur
     // and ssim already encode against the continuous source and would be
     // disturbed by an extra error-diffusion pass on top.
-    if (ds.method != dither::Method::none && metric == quantize::Metric::mse)
+    if (ds.method != dither::Method::none && !dither::is_ordered(ds.method))
         dither::apply(*image, *screen, pal, params, ds);
 
     // Render

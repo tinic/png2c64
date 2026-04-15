@@ -2428,7 +2428,7 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
     // use — those score against the continuous source and don't want
     // an extra error-diffusion pass on top.
     if (dither_settings.method != dither::Method::none &&
-        metric == quantize::Metric::mse) {
+        !dither::is_ordered(dither_settings.method)) {
         log_println("  Dithering...");
         if (mixed) {
             // Mixed mode: dither hires and MC cells in separate passes

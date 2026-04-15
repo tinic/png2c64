@@ -473,7 +473,6 @@ std::uint8_t find_most_common_color(
 
 using Tap = blur_util::Tap;
 using blur_util::build_kernel_taps;
-using blur_util::compute_blurred;
 using blur_util::PixelDistLut;
 using blur_util::build_pixel_dist_lut;
 using blur_util::ClosedCtx;
@@ -583,6 +582,108 @@ inline float score_cell_ssim(
 // OKLab (same formula precompute_cell_dist uses for the MSE path) so
 // blur/ssim scoring and per-pixel-nearest rendering both see the
 // dithered source.
+// Read the whole image into a flat row-major OKLab buffer, applying the
+// same optional ordered-dither threshold bias that `read_cell_lab` uses.
+// Used to pre-blur the image globally so the blur metric's per-cell
+// target is coherent across cell boundaries (no edge-clamp discontinuity
+// at every 8-px seam).
+inline std::vector<color_space::OKLab> build_image_lab(
+    const Image& image,
+    const ThresholdFn& threshold_fn = {},
+    float threshold_strength = 0.0f) {
+    auto w = image.width();
+    auto h = image.height();
+    std::vector<color_space::OKLab> out(w * h);
+    bool has_threshold = static_cast<bool>(threshold_fn);
+    for (std::size_t y = 0; y < h; ++y) {
+        for (std::size_t x = 0; x < w; ++x) {
+            auto lab = color_space::linear_to_oklab(image[x, y]);
+            if (has_threshold) {
+                float t = threshold_fn(x, y) * threshold_strength;
+                lab.L += t * 0.15f;
+                lab.a += t * 0.03f;
+                lab.b += t * 0.03f;
+            }
+            out[y * w + x] = lab;
+        }
+    }
+    return out;
+}
+
+// Floyd-Steinberg dither against the full palette (no cell constraints).
+// Returns a per-pixel palette index map. Used by the MSE quantize paths
+// (hires, multicolor) to drive coherent per-cell palette choice — each
+// cell's palette becomes the most-used colours in its region of the FS
+// output, so error diffusion downstream has somewhere to discharge
+// instead of snapping into the one palette colour a flat cell happened
+// to pick.
+inline std::vector<std::uint8_t> global_fs_indices(
+    const Image& image,
+    std::span<const color_space::OKLab> palette_lab) {
+    auto w = image.width();
+    auto h = image.height();
+    std::vector<color_space::OKLab> image_lab(w * h);
+    for (std::size_t y = 0; y < h; ++y)
+        for (std::size_t x = 0; x < w; ++x)
+            image_lab[y * w + x] =
+                color_space::linear_to_oklab(image[x, y]);
+    constexpr std::array<std::array<float, 3>, 4> fs_kernel = {{
+        {1.0f, 0.0f, 7.0f / 16.0f},
+        {-1.0f, 1.0f, 3.0f / 16.0f},
+        {0.0f, 1.0f, 5.0f / 16.0f},
+        {1.0f, 1.0f, 1.0f / 16.0f},
+    }};
+    constexpr float kEc = 0.12f;
+    auto clamp_oklab = [](color_space::OKLab e, float m) {
+        return color_space::OKLab{
+            std::clamp(e.L, -m, m),
+            std::clamp(e.a, -m, m),
+            std::clamp(e.b, -m, m)};
+    };
+    std::vector<color_space::OKLab> err_buf(w * h);
+    std::vector<std::uint8_t> out(w * h);
+    for (std::size_t y = 0; y < h; ++y) {
+        bool reverse = (y & 1) != 0;
+        for (std::size_t step = 0; step < w; ++step) {
+            auto x = reverse ? (w - 1 - step) : step;
+            auto idx = y * w + x;
+            auto ce = clamp_oklab(err_buf[idx], kEc);
+            color_space::OKLab adj{
+                image_lab[idx].L + ce.L,
+                image_lab[idx].a + ce.a,
+                image_lab[idx].b + ce.b};
+            float bd = std::numeric_limits<float>::max();
+            std::uint8_t bi = 0;
+            for (std::size_t c = 0; c < palette_lab.size(); ++c) {
+                auto& cl = palette_lab[c];
+                float dL = adj.L - cl.L;
+                float da = adj.a - cl.a;
+                float db = adj.b - cl.b;
+                float d = dL * dL + da * da + db * db;
+                if (d < bd) { bd = d; bi = static_cast<std::uint8_t>(c); }
+            }
+            out[idx] = bi;
+            auto& cl = palette_lab[bi];
+            color_space::OKLab qe{adj.L - cl.L, adj.a - cl.a, adj.b - cl.b};
+            for (auto& k : fs_kernel) {
+                float sx = reverse ? -k[0] : k[0];
+                int nx = static_cast<int>(x) + static_cast<int>(sx);
+                int ny = static_cast<int>(y) + static_cast<int>(k[1]);
+                if (nx < 0 || static_cast<std::size_t>(nx) >= w ||
+                    ny < 0 || static_cast<std::size_t>(ny) >= h)
+                    continue;
+                auto nidx = static_cast<std::size_t>(ny) * w +
+                            static_cast<std::size_t>(nx);
+                err_buf[nidx] = clamp_oklab({
+                    err_buf[nidx].L + qe.L * k[2],
+                    err_buf[nidx].a + qe.a * k[2],
+                    err_buf[nidx].b + qe.b * k[2]}, kEc);
+            }
+        }
+    }
+    return out;
+}
+
 inline std::vector<color_space::OKLab> read_cell_lab(
     const Image& image, std::size_t cell_x, std::size_t cell_y,
     const vic2::ModeParams& params,
@@ -637,9 +738,71 @@ ScreenResult quantize_hires(vic2::Mode mode, const Image& image,
 
             result.cells[idx] = std::move(cell);
         });
+
+        // Global-FS palette coherence (see multicolor path). Only for
+        // error-diffusion dither (tfn empty); ordered methods rely on
+        // the threshold-biased per-cell MSE palette. Cell palette is
+        // the top-2 most-used colours in each cell's region of a full-
+        // palette Floyd-Steinberg output.
+        if (!tfn) {
+            auto w = image.width();
+            auto global = global_fs_indices(image, palette_lab);
+            auto cw = params.cell_width;
+            auto ch = params.cell_height;
+            parallel_for_cells(cx, cy,
+                [&](std::size_t idx, std::size_t cxi, std::size_t cyi) {
+                    std::array<std::uint16_t, 16> hist{};
+                    auto px = cxi * cw;
+                    auto py = cyi * ch;
+                    for (std::size_t dy = 0; dy < ch; ++dy)
+                        for (std::size_t dx = 0; dx < cw; ++dx)
+                            ++hist[global[(py + dy) * w + px + dx]];
+                    std::array<std::uint8_t, 2> top{0, 1};
+                    for (std::size_t s = 0; s < 2; ++s) {
+                        std::uint16_t best_cnt = 0;
+                        std::uint8_t best_c = 0;
+                        for (std::size_t c = 0; c < 16; ++c) {
+                            if (hist[c] > best_cnt) {
+                                best_cnt = hist[c];
+                                best_c = static_cast<std::uint8_t>(c);
+                            }
+                        }
+                        top[s] = best_c;
+                        hist[best_c] = 0;
+                    }
+                    auto& cell = result.cells[idx];
+                    cell.cell_colors = {top[0], top[1]};
+                    cell.pixel_indices.resize(cw * ch);
+                    std::size_t pi = 0;
+                    auto& c0 = palette_lab[top[0]];
+                    auto& c1 = palette_lab[top[1]];
+                    for (std::size_t dy = 0; dy < ch; ++dy) {
+                        for (std::size_t dx = 0; dx < cw; ++dx) {
+                            auto px_lab = color_space::linear_to_oklab(
+                                image[px + dx, py + dy]);
+                            float d0 = (px_lab.L - c0.L) * (px_lab.L - c0.L)
+                                     + (px_lab.a - c0.a) * (px_lab.a - c0.a)
+                                     + (px_lab.b - c0.b) * (px_lab.b - c0.b);
+                            float d1 = (px_lab.L - c1.L) * (px_lab.L - c1.L)
+                                     + (px_lab.a - c1.a) * (px_lab.a - c1.a)
+                                     + (px_lab.b - c1.b) * (px_lab.b - c1.b);
+                            cell.pixel_indices[pi++] = (d1 < d0) ? 1 : 0;
+                        }
+                    }
+                });
+        }
     } else {
         auto kernel_taps = build_kernel_taps(params.cell_width,
                                               params.cell_height);
+        // Global source blur for the blur metric: eliminates the per-cell
+        // edge-clamp seam that was producing visible 8×N blocking in
+        // smooth gradients.
+        std::vector<color_space::OKLab> image_lab_blurred;
+        if (metric == Metric::blur) {
+            auto image_lab = build_image_lab(image, tfn, tstr);
+            image_lab_blurred = blur_util::blur_image_replicate(
+                image_lab, image.width(), image.height());
+        }
         parallel_for_cells(cx, cy,
             [&](std::size_t idx, std::size_t x, std::size_t y) {
                 auto cell_lab = read_cell_lab(image, x, y, params,
@@ -649,7 +812,9 @@ ScreenResult quantize_hires(vic2::Mode mode, const Image& image,
                 PixelDistLut pd_lut;
                 ClosedCtx blur_ctx{};
                 if (metric == Metric::blur) {
-                    blurred = compute_blurred(cell_lab, kernel_taps);
+                    blurred = blur_util::copy_cell_from(
+                        image_lab_blurred, image.width(),
+                        x, y, params.cell_width, params.cell_height);
                     pd_lut = build_pixel_dist_lut(cell_lab, palette_lab);
                     blur_ctx = make_closed_ctx(blurred);
                 } else {
@@ -677,7 +842,6 @@ ScreenResult quantize_hires(vic2::Mode mode, const Image& image,
                         }
                     }
                 }
-                // Build final pixel assignments via per-pixel-nearest of (best_i, best_j).
                 CellResult cell;
                 cell.cell_colors = {best_i, best_j};
                 cell.pixel_indices.resize(cell_lab.size());
@@ -758,6 +922,64 @@ ScreenResult quantize_multicolor_bruteforce(
                 best = std::move(candidate);
             }
         }
+
+        // Global-FS palette coherence pass (see global_fs_indices for
+        // rationale). Only runs for error-diffusion dither methods
+        // (tfn empty); ordered methods bake their threshold bias into
+        // the per-cell MSE and the overwrite would discard that.
+        if (!tfn) {
+            auto w = image.width();
+            auto global = global_fs_indices(image, palette_lab);
+            auto bg_color = best.background_color;
+            auto cw = params.cell_width;
+            auto ch = params.cell_height;
+            parallel_for_cells(cx, cy,
+                [&](std::size_t idx, std::size_t cxi, std::size_t cyi) {
+                    std::array<std::uint16_t, 16> hist{};
+                    auto px = cxi * cw;
+                    auto py = cyi * ch;
+                    for (std::size_t dy = 0; dy < ch; ++dy)
+                        for (std::size_t dx = 0; dx < cw; ++dx)
+                            ++hist[global[(py + dy) * w + px + dx]];
+                    hist[bg_color] = 0;  // bg fixed at slot 0
+                    std::array<std::uint8_t, 3> top{bg_color, bg_color, bg_color};
+                    for (std::size_t s = 0; s < 3; ++s) {
+                        std::uint16_t best_cnt = 0;
+                        std::uint8_t best_c = bg_color;
+                        for (std::size_t c = 0; c < 16; ++c) {
+                            if (hist[c] > best_cnt) {
+                                best_cnt = hist[c];
+                                best_c = static_cast<std::uint8_t>(c);
+                            }
+                        }
+                        if (best_cnt == 0) break;
+                        top[s] = best_c;
+                        hist[best_c] = 0;
+                    }
+                    auto& cell = best.cells[idx];
+                    cell.cell_colors = {bg_color, top[0], top[1], top[2]};
+                    cell.pixel_indices.resize(cw * ch);
+                    std::size_t pi = 0;
+                    for (std::size_t dy = 0; dy < ch; ++dy) {
+                        for (std::size_t dx = 0; dx < cw; ++dx) {
+                            auto px_lab = color_space::linear_to_oklab(
+                                image[px + dx, py + dy]);
+                            float bd2 = std::numeric_limits<float>::max();
+                            std::uint8_t bs = 0;
+                            for (std::uint8_t s = 0; s < 4; ++s) {
+                                auto& cl = palette_lab[cell.cell_colors[s]];
+                                float dL = px_lab.L - cl.L;
+                                float da = px_lab.a - cl.a;
+                                float db = px_lab.b - cl.b;
+                                float d = dL * dL + da * da + db * db;
+                                if (d < bd2) { bd2 = d; bs = s; }
+                            }
+                            cell.pixel_indices[pi++] = bs;
+                        }
+                    }
+                });
+        }
+
         return best;
     }
 
@@ -769,9 +991,15 @@ ScreenResult quantize_multicolor_bruteforce(
     std::vector<std::vector<color_space::OKLab>> blurred_src;
     std::vector<PixelDistLut> pd_luts;
     std::vector<CellSsimStats> ssim_stats;
+    std::vector<color_space::OKLab> image_lab_blurred;
     if (metric == Metric::blur) {
         blurred_src.resize(total_cells);
         pd_luts.resize(total_cells);
+        // Global source blur so adjacent cells see a coherent gradient
+        // target rather than each cell's replicate-clamped version.
+        auto image_lab = build_image_lab(image, tfn, tstr);
+        image_lab_blurred = blur_util::blur_image_replicate(
+            image_lab, image.width(), image.height());
     } else {
         ssim_stats.resize(total_cells);
     }
@@ -779,8 +1007,9 @@ ScreenResult quantize_multicolor_bruteforce(
         [&](std::size_t idx, std::size_t x, std::size_t y) {
             cells_lab[idx] = read_cell_lab(image, x, y, params, tfn, tstr);
             if (metric == Metric::blur) {
-                blurred_src[idx] = compute_blurred(cells_lab[idx],
-                                                     kernel_taps);
+                blurred_src[idx] = blur_util::copy_cell_from(
+                    image_lab_blurred, image.width(),
+                    x, y, params.cell_width, params.cell_height);
                 pd_luts[idx] = build_pixel_dist_lut(cells_lab[idx],
                                                      palette_lab);
             } else {
@@ -1174,28 +1403,21 @@ struct BlurCell {
 };
 
 void precompute_blur_cell(
-    const Image& image, std::size_t cell_x, std::size_t cell_y,
-    const KernelTaps& taps,
+    std::span<const color_space::OKLab> global_blurred, std::size_t image_w,
+    std::size_t cell_x, std::size_t cell_y,
+    const KernelTaps& /*taps*/,
     const std::array<GlyphPrecompute, 256>& gp,
     BlurCell& out) {
     auto px = cell_x * 8;
     auto py = cell_y * 8;
-    std::array<color_space::OKLab, 64> src_lab;
-    for (std::size_t dy = 0; dy < 8; ++dy)
-        for (std::size_t dx = 0; dx < 8; ++dx)
-            src_lab[dy * 8 + dx] =
-                color_space::linear_to_oklab(image[px + dx, py + dy]);
     out.K0 = 0;
-    for (std::size_t p = 0; p < 64; ++p) {
-        color_space::OKLab b{0, 0, 0};
-        for (auto& tap : taps[p]) {
-            auto& v = src_lab[tap.q];
-            b.L += tap.w * v.L;
-            b.a += tap.w * v.a;
-            b.b += tap.w * v.b;
+    for (std::size_t dy = 0; dy < 8; ++dy) {
+        auto row = (py + dy) * image_w + px;
+        for (std::size_t dx = 0; dx < 8; ++dx) {
+            auto b = global_blurred[row + dx];
+            out.blurred[dy * 8 + dx] = b;
+            out.K0 += b.L * b.L + b.a * b.a + b.b * b.b;
         }
-        out.blurred[p] = b;
-        out.K0 += b.L * b.L + b.a * b.a + b.b * b.b;
     }
     for (std::size_t ch = 0; ch < 256; ++ch) {
         color_space::OKLab T1{0, 0, 0};
@@ -1539,9 +1761,17 @@ ScreenResult quantize_petscii(
         }
         if (metric == Metric::blur) {
             blur_cells.resize(total_cells);
+            // Global source blur: the petscii blur metric now targets a
+            // globally-blurred OKLab image instead of each cell's
+            // replicate-clamped local blur, so adjacent cells see a
+            // coherent gradient and don't snap to a visible 8×8 grid.
+            auto image_lab = build_image_lab(image);
+            auto global_blurred = blur_util::blur_image_replicate(
+                image_lab, image.width(), image.height());
             parallel_for_cells(cx, cy,
                 [&](std::size_t idx, std::size_t x, std::size_t y) {
-                    precompute_blur_cell(image, x, y, kernel_taps,
+                    precompute_blur_cell(global_blurred, image.width(),
+                                         x, y, kernel_taps,
                                          glyph_pre, blur_cells[idx]);
                 });
         } else {  // Metric::ssim
