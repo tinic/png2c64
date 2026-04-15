@@ -145,7 +145,7 @@ function doConvert() {
       ctx.drawImage(tmp, 0, 0, dw, dh)
 
       if (crtEnabled.value) {
-        applyCRT(ctx, dw, dh)
+        applyCRT(ctx, dw, dh, scale)
       }
 
       resultInfo.value = `${result.width} x ${result.height}`

@@ -3,7 +3,7 @@
 // scanlines, phosphor bloom, and vignette. Display-only — does not
 // affect exported files.
 
-export function applyCRT(ctx, width, height) {
+export function applyCRT(ctx, width, height, pixelScale = 4) {
   const data = ctx.getImageData(0, 0, width, height)
   const px = data.data
 
@@ -81,16 +81,31 @@ export function applyCRT(ctx, width, height) {
     }
   }
 
-  // 2. Scanlines: darken every other row
+  // 2. Scanlines aligned to source pixel rows.
+  //
+  // Each source row maps to `pixelScale` canvas rows. Real CRT beams
+  // are bright in the centre of a scanline and fade at the top/bottom
+  // edges. Use a sin² profile across each source row so the canvas
+  // rows nearest a source-row boundary are dim and the rows in the
+  // middle are at full brightness — gives a clean horizontal-line
+  // pattern without the screen-door noise of every-other-canvas-row.
+  // depth = how dark the dimmest row gets (0 = no scanlines, 1 = full).
+  const depth = 0.45
+  const factors = new Float32Array(pixelScale)
+  for (let i = 0; i < pixelScale; i++) {
+    const t = (i + 0.5) / pixelScale       // [0,1] within source row
+    const beam = Math.sin(t * Math.PI)     // 0 → 1 → 0
+    factors[i] = 1.0 - depth + depth * beam * beam
+  }
   for (let y = 0; y < height; y++) {
-    if (y % 2 === 1) {
-      const rowOff = y * width * 4
-      for (let x = 0; x < width; x++) {
-        const i = rowOff + x * 4
-        px[i]     = px[i] * 0.55
-        px[i + 1] = px[i + 1] * 0.55
-        px[i + 2] = px[i + 2] * 0.55
-      }
+    const f = factors[y % pixelScale]
+    if (f >= 0.999) continue
+    const rowOff = y * width * 4
+    for (let x = 0; x < width; x++) {
+      const i = rowOff + x * 4
+      px[i]     = px[i] * f
+      px[i + 1] = px[i + 1] * f
+      px[i + 2] = px[i + 2] * f
     }
   }
 
