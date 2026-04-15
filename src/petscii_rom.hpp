@@ -164,4 +164,18 @@ consteval std::array<CharBits, 256> make_char_bits() {
 
 static constexpr auto char_bits = make_char_bits();
 
+// Conservative "graphics-only" subset of PETSCII display codes — skips
+// the alphabet, digits, punctuation, and their reverse-video forms.
+// Includes: space (32), semi-graphics and PETSCII graphics (64-127),
+// solid foreground block (160, the reverse of space), and the reverse
+// of 64-127 (192-255). About 130 candidate characters — enough for
+// graphic-style halftone approximation without letter-shaped artefacts
+// showing up in smooth regions.
+inline constexpr bool is_graphic_char(std::uint8_t ch) noexcept {
+    return ch == 32
+        || (ch >= 64 && ch <= 127)
+        || ch == 160
+        || ch >= 192;
+}
+
 } // namespace png2c64::petscii

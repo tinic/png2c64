@@ -45,6 +45,10 @@ Options parse_js_options(val js_opts) {
         opts.width = js_opts["width"].as<int>();
     if (js_opts.hasOwnProperty("height"))
         opts.height = js_opts["height"].as<int>();
+    if (js_opts.hasOwnProperty("metric"))
+        opts.metric = js_opts["metric"].as<std::string>();
+    if (js_opts.hasOwnProperty("graphicsOnly"))
+        opts.graphics_only = js_opts["graphicsOnly"].as<bool>();
     return opts;
 }
 

@@ -1,4 +1,5 @@
 #include "charset.hpp"
+#include "blur_util.hpp"
 #include "color_space.hpp"
 #include "quantize.hpp"
 #include "vic2.hpp"
@@ -103,7 +104,8 @@ float pattern_distance_multicolor(const Pattern& a, const Pattern& b,
 // Hires charset: 1 shared bg + 1 fg per cell
 quantize::ScreenResult select_colors_hires(
     const Image& image, const Palette& palette,
-    std::size_t cols, std::size_t rows) {
+    std::size_t cols, std::size_t rows,
+    quantize::Metric metric = quantize::Metric::mse) {
 
     auto n = static_cast<std::uint8_t>(palette.size());
     auto pal_lab = precompute_lab(palette);
@@ -122,6 +124,44 @@ quantize::ScreenResult select_colors_hires(
                             image[cx * 8 + dx, cy * 8 + dy]));
         }
 
+    // Per-cell precompute for blur / ssim (mirrors select_colors_multicolor).
+    namespace bu = quantize::blur_util;
+    auto kernel_taps = bu::build_kernel_taps(8, 8);
+    std::vector<std::vector<OKLab>> blur_src;
+    std::vector<bu::PixelDistLut> pd_luts;
+    std::vector<bu::ClosedCtx> closed_ctx;
+    struct CellSsim { OKLab mu_s, var_s; };
+    std::vector<CellSsim> ssim_pre;
+
+    if (metric == quantize::Metric::blur) {
+        blur_src.resize(num_cells);
+        pd_luts.resize(num_cells);
+        closed_ctx.resize(num_cells);
+        for (std::size_t ci = 0; ci < num_cells; ++ci) {
+            blur_src[ci] = bu::compute_blurred(cells_lab[ci], kernel_taps);
+            pd_luts[ci] = bu::build_pixel_dist_lut(cells_lab[ci], pal_lab);
+            closed_ctx[ci] = bu::make_closed_ctx(blur_src[ci]);
+        }
+    } else if (metric == quantize::Metric::ssim) {
+        ssim_pre.resize(num_cells);
+        constexpr float inv_n = 1.0f / 64.0f;
+        for (std::size_t ci = 0; ci < num_cells; ++ci) {
+            OKLab mu{0, 0, 0};
+            for (auto& v : cells_lab[ci]) { mu.L += v.L; mu.a += v.a; mu.b += v.b; }
+            mu.L *= inv_n; mu.a *= inv_n; mu.b *= inv_n;
+            OKLab var{0, 0, 0};
+            for (auto& v : cells_lab[ci]) {
+                float dL = v.L - mu.L, da = v.a - mu.a, db = v.b - mu.b;
+                var.L += dL * dL;
+                var.a += da * da;
+                var.b += db * db;
+            }
+            var.L *= inv_n; var.a *= inv_n; var.b *= inv_n;
+            ssim_pre[ci].mu_s = mu;
+            ssim_pre[ci].var_s = var;
+        }
+    }
+
     // Try all 16 backgrounds
     float best_total = std::numeric_limits<float>::max();
     std::uint8_t best_bg = 0;
@@ -136,13 +176,71 @@ quantize::ScreenResult select_colors_hires(
             std::uint8_t best_fg = bg;
             for (std::uint8_t fg = 0; fg < n; ++fg) {
                 if (fg == bg) continue;
-                float err = 0.0f;
-                for (auto& px : cells_lab[ci]) {
+                float err;
+                if (metric == quantize::Metric::blur) {
+                    err = bu::score_cell_blur_2color(
+                        pd_luts[ci], blur_src[ci], kernel_taps, pal_lab,
+                        closed_ctx[ci], bg, fg);
+                } else if (metric == quantize::Metric::ssim) {
+                    constexpr float inv_n = 1.0f / 64.0f;
+                    constexpr float C1 = 0.01f * 0.01f;
+                    constexpr float C2 = 0.03f * 0.03f;
+                    constexpr float kMseLambda = 1.0f;
+                    auto& sp = ssim_pre[ci];
                     auto& bl = pal_lab[bg];
                     auto& fl = pal_lab[fg];
-                    float db = (px.L-bl.L)*(px.L-bl.L) + (px.a-bl.a)*(px.a-bl.a) + (px.b-bl.b)*(px.b-bl.b);
-                    float df = (px.L-fl.L)*(px.L-fl.L) + (px.a-fl.a)*(px.a-fl.a) + (px.b-fl.b)*(px.b-fl.b);
-                    err += std::min(db, df);
+                    OKLab mu_r{0, 0, 0};
+                    float mse = 0;
+                    std::array<OKLab, 64> rendered;
+                    for (std::size_t p = 0; p < 64; ++p) {
+                        auto& px = cells_lab[ci][p];
+                        float db_ = (px.L-bl.L)*(px.L-bl.L) + (px.a-bl.a)*(px.a-bl.a) + (px.b-bl.b)*(px.b-bl.b);
+                        float df_ = (px.L-fl.L)*(px.L-fl.L) + (px.a-fl.a)*(px.a-fl.a) + (px.b-fl.b)*(px.b-fl.b);
+                        auto& chosen = (df_ < db_) ? fl : bl;
+                        rendered[p] = chosen;
+                        mu_r.L += chosen.L;
+                        mu_r.a += chosen.a;
+                        mu_r.b += chosen.b;
+                        float ddL = px.L - chosen.L;
+                        float dda = px.a - chosen.a;
+                        float ddb = px.b - chosen.b;
+                        mse += ddL * ddL + dda * dda + ddb * ddb;
+                    }
+                    mu_r.L *= inv_n; mu_r.a *= inv_n; mu_r.b *= inv_n;
+                    OKLab var_r{0, 0, 0}, cov{0, 0, 0};
+                    for (std::size_t p = 0; p < 64; ++p) {
+                        float drL = rendered[p].L - mu_r.L;
+                        float dra = rendered[p].a - mu_r.a;
+                        float drb = rendered[p].b - mu_r.b;
+                        var_r.L += drL * drL;
+                        var_r.a += dra * dra;
+                        var_r.b += drb * drb;
+                        cov.L += drL * (cells_lab[ci][p].L - sp.mu_s.L);
+                        cov.a += dra * (cells_lab[ci][p].a - sp.mu_s.a);
+                        cov.b += drb * (cells_lab[ci][p].b - sp.mu_s.b);
+                    }
+                    var_r.L *= inv_n; var_r.a *= inv_n; var_r.b *= inv_n;
+                    cov.L *= inv_n; cov.a *= inv_n; cov.b *= inv_n;
+                    auto ssim_ch = [&](float ms, float vs, float cv,
+                                        float mr, float vr) {
+                        float num = (2.0f * ms * mr + C1) * (2.0f * cv + C2);
+                        float den = (ms * ms + mr * mr + C1) * (vs + vr + C2);
+                        return num / den;
+                    };
+                    float ssim = ssim_ch(sp.mu_s.L, sp.var_s.L, cov.L, mu_r.L, var_r.L)
+                               + ssim_ch(sp.mu_s.a, sp.var_s.a, cov.a, mu_r.a, var_r.a)
+                               + ssim_ch(sp.mu_s.b, sp.var_s.b, cov.b, mu_r.b, var_r.b);
+                    err = -ssim + kMseLambda * mse;
+                } else {
+                    // mse: original per-pixel-nearest of 2 colors.
+                    err = 0.0f;
+                    auto& bl = pal_lab[bg];
+                    auto& fl = pal_lab[fg];
+                    for (auto& px : cells_lab[ci]) {
+                        float db = (px.L-bl.L)*(px.L-bl.L) + (px.a-bl.a)*(px.a-bl.a) + (px.b-bl.b)*(px.b-bl.b);
+                        float df = (px.L-fl.L)*(px.L-fl.L) + (px.a-fl.a)*(px.a-fl.a) + (px.b-fl.b)*(px.b-fl.b);
+                        err += std::min(db, df);
+                    }
                 }
                 if (err < best_cell) { best_cell = err; best_fg = fg; }
             }
@@ -188,7 +286,8 @@ struct McColorSelection {
 
 McColorSelection select_colors_multicolor(
     const Image& image, const Palette& palette,
-    std::size_t cols, std::size_t rows) {
+    std::size_t cols, std::size_t rows,
+    quantize::Metric metric = quantize::Metric::mse) {
 
     auto n = static_cast<std::uint8_t>(palette.size());
     auto pal_lab = precompute_lab(palette);
@@ -206,6 +305,55 @@ McColorSelection select_colors_multicolor(
                             image[cx * 4 + dx, cy * 8 + dy]));
         }
 
+    // ---- Per-cell setup for blur / ssim metrics ----
+    namespace bu = quantize::blur_util;
+    auto kernel_taps = bu::build_kernel_taps(4, 8);
+
+    // For blur: per-cell blurred source + pixel_dist LUT. Reused across
+    // 560 triples × 8 pc choices. For ssim: per-cell μ_s, var_s,
+    // total_sum, A_norm.
+    std::vector<std::vector<OKLab>> blur_src;
+    std::vector<bu::PixelDistLut> pd_luts;
+    struct CellSsim {
+        OKLab mu_s, var_s, total_sum;
+        float A_norm;
+    };
+    std::vector<CellSsim> ssim_pre(metric == quantize::Metric::ssim ? num_cells : 0);
+
+    if (metric == quantize::Metric::blur) {
+        blur_src.resize(num_cells);
+        pd_luts.resize(num_cells);
+        for (std::size_t ci = 0; ci < num_cells; ++ci) {
+            blur_src[ci] = bu::compute_blurred(cells_lab[ci], kernel_taps);
+            pd_luts[ci] = bu::build_pixel_dist_lut(cells_lab[ci], pal_lab);
+        }
+    } else if (metric == quantize::Metric::ssim) {
+        constexpr float inv_n = 1.0f / 32.0f;
+        for (std::size_t ci = 0; ci < num_cells; ++ci) {
+            OKLab mu{0, 0, 0};
+            for (auto& v : cells_lab[ci]) {
+                mu.L += v.L; mu.a += v.a; mu.b += v.b;
+            }
+            ssim_pre[ci].total_sum = mu;
+            mu.L *= inv_n; mu.a *= inv_n; mu.b *= inv_n;
+            OKLab var{0, 0, 0};
+            float A = 0;
+            for (auto& v : cells_lab[ci]) {
+                float dL = v.L - mu.L;
+                float da = v.a - mu.a;
+                float db = v.b - mu.b;
+                var.L += dL * dL;
+                var.a += da * da;
+                var.b += db * db;
+                A += v.L * v.L + v.a * v.a + v.b * v.b;
+            }
+            var.L *= inv_n; var.a *= inv_n; var.b *= inv_n;
+            ssim_pre[ci].mu_s = mu;
+            ssim_pre[ci].var_s = var;
+            ssim_pre[ci].A_norm = A;
+        }
+    }
+
     // Try all C(16,3) triples
     struct TripleResult {
         std::uint8_t c0, c1, c2;
@@ -220,14 +368,74 @@ McColorSelection select_colors_multicolor(
             for (std::uint8_t k = j + 1; k < n; ++k)
                 candidates.push_back({i, j, k, 0.0f, {}});
 
+    // For blur metric only: per-cell err depends only on the 4-set
+    // {c0,c1,c2,pc}. The same 4-set is reached from multiple
+    // (triple, pc) splits (any element in 0..7 can play pc), so
+    // dedupe — compute once per (cell, 4-set), reuse for every
+    // triple that selects that 4-set. ~1.6× saving on charset-mc
+    // (~2800 (triple, pc) combos collapse to ~1750 unique 4-sets).
+    constexpr std::uint16_t kNoSet = 0xFFFF;
+    std::array<std::uint16_t, 65536> set_index{};
+    std::vector<std::uint16_t> set_masks;
+    if (metric == quantize::Metric::blur) {
+        std::ranges::fill(set_index, kNoSet);
+        // Enumerate 4-sets that contain at least one element from 0..7.
+        for (std::uint8_t a = 0; a < n; ++a)
+            for (std::uint8_t b = a + 1; b < n; ++b)
+                for (std::uint8_t c = b + 1; c < n; ++c)
+                    for (std::uint8_t d = c + 1; d < n; ++d) {
+                        if (a >= 8) continue;  // need ≥1 element in 0..7 (=> a<8)
+                        auto mask = static_cast<std::uint16_t>(
+                            (1u << a) | (1u << b) | (1u << c) | (1u << d));
+                        set_index[mask] =
+                            static_cast<std::uint16_t>(set_masks.size());
+                        set_masks.push_back(mask);
+                    }
+    }
+    auto num_sets = set_masks.size();
+    // err_table[ci * num_sets + s]
+    std::vector<float> err_table;
+    if (metric == quantize::Metric::blur) {
+        err_table.assign(num_cells * num_sets,
+                          std::numeric_limits<float>::max());
+        std::atomic<std::size_t> next_cell{0};
+        auto build = [&] {
+            std::vector<OKLab> assign_scratch;
+            assign_scratch.reserve(32);
+            while (true) {
+                auto ci = next_cell.fetch_add(1, std::memory_order_relaxed);
+                if (ci >= num_cells) break;
+                for (std::size_t s = 0; s < num_sets; ++s) {
+                    auto m = set_masks[s];
+                    std::array<std::uint8_t, 4> colors{};
+                    std::size_t k = 0;
+                    for (std::uint8_t c = 0; c < n; ++c)
+                        if (m & (1u << c)) colors[k++] = c;
+                    err_table[ci * num_sets + s] = bu::score_cell_blur_fused(
+                        pd_luts[ci], blur_src[ci], kernel_taps,
+                        pal_lab, colors, assign_scratch);
+                }
+            }
+        };
+        auto nt = std::min(static_cast<std::size_t>(hw_threads()), num_cells);
+        std::vector<std::jthread> threads;
+        threads.reserve(nt - 1);
+        for (std::size_t t = 1; t < nt; ++t) threads.emplace_back(build);
+        build();
+    }
+
     std::atomic<std::size_t> next{0};
     auto worker = [&] {
+        std::vector<OKLab> assign_scratch;
+        assign_scratch.reserve(32);
         while (true) {
             auto ti = next.fetch_add(1, std::memory_order_relaxed);
             if (ti >= candidates.size()) break;
             auto& cand = candidates[ti];
             cand.per_cell.resize(num_cells);
             cand.total_error = 0.0f;
+            std::uint16_t triple_mask = static_cast<std::uint16_t>(
+                (1u << cand.c0) | (1u << cand.c1) | (1u << cand.c2));
             for (std::size_t ci = 0; ci < num_cells; ++ci) {
                 float best_cell = std::numeric_limits<float>::max();
                 std::uint8_t best_pc = 0;
@@ -235,15 +443,102 @@ McColorSelection select_colors_multicolor(
                 for (std::uint8_t pc = 0; pc < 8; ++pc) {
                     if (pc == cand.c0 || pc == cand.c1 || pc == cand.c2) continue;
                     std::array<std::uint8_t, 4> colors = {cand.c0, cand.c1, cand.c2, pc};
-                    float err = 0.0f;
-                    for (auto& px : cells_lab[ci]) {
-                        float best = std::numeric_limits<float>::max();
-                        for (auto c : colors) {
-                            auto& cl = pal_lab[c];
-                            float d = (px.L-cl.L)*(px.L-cl.L) + (px.a-cl.a)*(px.a-cl.a) + (px.b-cl.b)*(px.b-cl.b);
-                            if (d < best) best = d;
+
+                    float err;
+                    if (metric == quantize::Metric::blur) {
+                        auto m = static_cast<std::uint16_t>(
+                            triple_mask | (1u << pc));
+                        err = err_table[ci * num_sets + set_index[m]];
+                    } else if (metric == quantize::Metric::ssim) {
+                        // Per-pixel-nearest pattern; SSIM + MSE hybrid
+                        // (same recipe as petscii_pick_ssim).
+                        constexpr float inv_n = 1.0f / 32.0f;
+                        constexpr float C1 = 0.01f * 0.01f;
+                        constexpr float C2 = 0.03f * 0.03f;
+                        constexpr float kMseLambda = 1.0f;
+                        auto& sp = ssim_pre[ci];
+                        std::array<std::uint8_t, 32> assign;
+                        std::array<std::size_t, 4> count{};
+                        std::array<OKLab, 4> S{};   // per-color centered sum
+                        OKLab mu_r{0, 0, 0};
+                        for (std::size_t p = 0; p < 32; ++p) {
+                            auto& px = cells_lab[ci][p];
+                            float bd = std::numeric_limits<float>::max();
+                            std::uint8_t bi = 0;
+                            for (std::uint8_t c = 0; c < 4; ++c) {
+                                auto& cl = pal_lab[colors[c]];
+                                float d = (px.L-cl.L)*(px.L-cl.L)
+                                        + (px.a-cl.a)*(px.a-cl.a)
+                                        + (px.b-cl.b)*(px.b-cl.b);
+                                if (d < bd) { bd = d; bi = c; }
+                            }
+                            assign[p] = bi;
+                            ++count[bi];
+                            S[bi].L += px.L - sp.mu_s.L;
+                            S[bi].a += px.a - sp.mu_s.a;
+                            S[bi].b += px.b - sp.mu_s.b;
                         }
-                        err += best;
+                        // Rendered mean μ_r per channel.
+                        for (std::uint8_t c = 0; c < 4; ++c) {
+                            auto& cl = pal_lab[colors[c]];
+                            float w = static_cast<float>(count[c]) * inv_n;
+                            mu_r.L += w * cl.L;
+                            mu_r.a += w * cl.a;
+                            mu_r.b += w * cl.b;
+                        }
+                        // Rendered variance and covariance (closed form).
+                        OKLab var_r{0, 0, 0};
+                        OKLab cov{0, 0, 0};
+                        for (std::uint8_t c = 0; c < 4; ++c) {
+                            auto& cl = pal_lab[colors[c]];
+                            float w = static_cast<float>(count[c]) * inv_n;
+                            float dL = cl.L - mu_r.L;
+                            float da = cl.a - mu_r.a;
+                            float db = cl.b - mu_r.b;
+                            var_r.L += w * dL * dL;
+                            var_r.a += w * da * da;
+                            var_r.b += w * db * db;
+                            cov.L += (cl.L - mu_r.L) * S[c].L;
+                            cov.a += (cl.a - mu_r.a) * S[c].a;
+                            cov.b += (cl.b - mu_r.b) * S[c].b;
+                        }
+                        cov.L *= inv_n; cov.a *= inv_n; cov.b *= inv_n;
+                        auto ssim_ch = [&](float ms, float vs, float cv,
+                                            float mr, float vr) {
+                            float num = (2.0f * ms * mr + C1)
+                                      * (2.0f * cv + C2);
+                            float den = (ms * ms + mr * mr + C1)
+                                      * (vs + vr + C2);
+                            return num / den;
+                        };
+                        float ssim = ssim_ch(sp.mu_s.L, sp.var_s.L, cov.L,
+                                              mu_r.L, var_r.L)
+                                   + ssim_ch(sp.mu_s.a, sp.var_s.a, cov.a,
+                                              mu_r.a, var_r.a)
+                                   + ssim_ch(sp.mu_s.b, sp.var_s.b, cov.b,
+                                              mu_r.b, var_r.b);
+                        // MSE on the per-pixel-nearest rendering.
+                        float mse = 0.0f;
+                        for (std::size_t p = 0; p < 32; ++p) {
+                            auto& px = cells_lab[ci][p];
+                            auto& cl = pal_lab[colors[assign[p]]];
+                            float dL = px.L - cl.L;
+                            float da = px.a - cl.a;
+                            float db = px.b - cl.b;
+                            mse += dL * dL + da * da + db * db;
+                        }
+                        err = -ssim + kMseLambda * mse;
+                    } else {  // mse: original path
+                        err = 0.0f;
+                        for (auto& px : cells_lab[ci]) {
+                            float best = std::numeric_limits<float>::max();
+                            for (auto c : colors) {
+                                auto& cl = pal_lab[c];
+                                float d = (px.L-cl.L)*(px.L-cl.L) + (px.a-cl.a)*(px.a-cl.a) + (px.b-cl.b)*(px.b-cl.b);
+                                if (d < best) best = d;
+                            }
+                            err += best;
+                        }
                     }
                     if (err < best_cell) { best_cell = err; best_pc = pc; }
                 }
@@ -337,7 +632,8 @@ struct MixedColorSelection {
 
 MixedColorSelection select_colors_mixed(
     const Image& image, const Palette& palette,
-    std::size_t cols, std::size_t rows) {
+    std::size_t cols, std::size_t rows,
+    quantize::Metric metric = quantize::Metric::mse) {
 
     auto n = static_cast<std::uint8_t>(palette.size());
     auto pal_lab = precompute_lab(palette);
@@ -368,6 +664,152 @@ MixedColorSelection select_colors_mixed(
             }
         }
 
+    // Metric-aware precomputes for blur and ssim (mirrors the setup
+    // used in select_colors_hires / select_colors_multicolor).
+    namespace bu = quantize::blur_util;
+    std::vector<std::array<bu::Tap, 9>> kernel_taps_hi;
+    std::vector<std::array<bu::Tap, 9>> kernel_taps_mc;
+    std::vector<std::vector<OKLab>> blurred_hi;
+    std::vector<std::vector<OKLab>> blurred_mc;
+    std::vector<bu::PixelDistLut> pd_luts_hi;
+    std::vector<bu::PixelDistLut> pd_luts_mc;
+    std::vector<bu::ClosedCtx> closed_ctx_hi;
+    struct CellStats { OKLab mu_s, var_s; };
+    std::vector<CellStats> ssim_hi;
+    std::vector<CellStats> ssim_mc;
+    if (metric == quantize::Metric::blur) {
+        kernel_taps_hi = bu::build_kernel_taps(8, 8);
+        kernel_taps_mc = bu::build_kernel_taps(4, 8);
+        blurred_hi.resize(num_cells);
+        blurred_mc.resize(num_cells);
+        pd_luts_hi.resize(num_cells);
+        pd_luts_mc.resize(num_cells);
+        closed_ctx_hi.resize(num_cells);
+        for (std::size_t ci = 0; ci < num_cells; ++ci) {
+            blurred_hi[ci] = bu::compute_blurred(cells_hi[ci], kernel_taps_hi);
+            blurred_mc[ci] = bu::compute_blurred(cells_mc[ci], kernel_taps_mc);
+            pd_luts_hi[ci] = bu::build_pixel_dist_lut(cells_hi[ci], pal_lab);
+            pd_luts_mc[ci] = bu::build_pixel_dist_lut(cells_mc[ci], pal_lab);
+            closed_ctx_hi[ci] = bu::make_closed_ctx(blurred_hi[ci]);
+        }
+    } else if (metric == quantize::Metric::ssim) {
+        ssim_hi.resize(num_cells);
+        ssim_mc.resize(num_cells);
+        auto stats_for = [](const std::vector<OKLab>& cell) {
+            CellStats s{};
+            float inv_n = 1.0f / static_cast<float>(cell.size());
+            for (auto& v : cell) { s.mu_s.L += v.L; s.mu_s.a += v.a; s.mu_s.b += v.b; }
+            s.mu_s.L *= inv_n; s.mu_s.a *= inv_n; s.mu_s.b *= inv_n;
+            for (auto& v : cell) {
+                float dL = v.L - s.mu_s.L, da = v.a - s.mu_s.a, db = v.b - s.mu_s.b;
+                s.var_s.L += dL * dL;
+                s.var_s.a += da * da;
+                s.var_s.b += db * db;
+            }
+            s.var_s.L *= inv_n; s.var_s.a *= inv_n; s.var_s.b *= inv_n;
+            return s;
+        };
+        for (std::size_t ci = 0; ci < num_cells; ++ci) {
+            ssim_hi[ci] = stats_for(cells_hi[ci]);
+            ssim_mc[ci] = stats_for(cells_mc[ci]);
+        }
+    }
+
+    // Score (cell_index, candidate colours, is_hires) under the active
+    // metric. For mse: per-pixel-nearest dist². For blur: build
+    // per-pixel-nearest rendering, blur it, MSE vs precomputed blurred
+    // source. For ssim: SSIM+MSE hybrid on the rendering.
+    // Per-worker scratch for the fused blur scorer.
+    thread_local std::vector<OKLab> assign_scratch;
+    auto score_cell = [&](std::size_t ci,
+                           std::span<const std::uint8_t> colors,
+                           bool is_hi) -> float {
+        auto& cell_lab = is_hi ? cells_hi[ci] : cells_mc[ci];
+        if (metric == quantize::Metric::mse) {
+            float err = 0;
+            for (auto& px : cell_lab) {
+                float best = std::numeric_limits<float>::max();
+                for (auto c : colors) {
+                    auto& cl = pal_lab[c];
+                    float d = (px.L-cl.L)*(px.L-cl.L)
+                            + (px.a-cl.a)*(px.a-cl.a)
+                            + (px.b-cl.b)*(px.b-cl.b);
+                    if (d < best) best = d;
+                }
+                err += best;
+            }
+            return err;
+        }
+        if (metric == quantize::Metric::blur) {
+            if (is_hi && colors.size() == 2) {
+                return bu::score_cell_blur_2color(
+                    pd_luts_hi[ci], blurred_hi[ci], kernel_taps_hi, pal_lab,
+                    closed_ctx_hi[ci], colors[0], colors[1]);
+            }
+            return bu::score_cell_blur_fused(
+                is_hi ? pd_luts_hi[ci] : pd_luts_mc[ci],
+                is_hi ? blurred_hi[ci] : blurred_mc[ci],
+                is_hi ? kernel_taps_hi : kernel_taps_mc,
+                pal_lab, colors, assign_scratch);
+        }
+        // ssim: reuse existing per-pixel-nearest path
+        std::vector<OKLab> rendered(cell_lab.size());
+        for (std::size_t p = 0; p < cell_lab.size(); ++p) {
+            auto& px = cell_lab[p];
+            float bd = std::numeric_limits<float>::max();
+            std::uint8_t bi = 0;
+            for (std::uint8_t c = 0; c < colors.size(); ++c) {
+                auto& cl = pal_lab[colors[c]];
+                float d = (px.L-cl.L)*(px.L-cl.L)
+                        + (px.a-cl.a)*(px.a-cl.a)
+                        + (px.b-cl.b)*(px.b-cl.b);
+                if (d < bd) { bd = d; bi = c; }
+            }
+            rendered[p] = pal_lab[colors[bi]];
+        }
+        // ssim hybrid
+        constexpr float C1 = 0.01f * 0.01f;
+        constexpr float C2 = 0.03f * 0.03f;
+        constexpr float kMseLambda = 1.0f;
+        auto& sp = is_hi ? ssim_hi[ci] : ssim_mc[ci];
+        float inv_n = 1.0f / static_cast<float>(cell_lab.size());
+        OKLab mu_r{0, 0, 0};
+        float mse = 0;
+        for (std::size_t p = 0; p < cell_lab.size(); ++p) {
+            mu_r.L += rendered[p].L;
+            mu_r.a += rendered[p].a;
+            mu_r.b += rendered[p].b;
+            float dL = cell_lab[p].L - rendered[p].L;
+            float da = cell_lab[p].a - rendered[p].a;
+            float db = cell_lab[p].b - rendered[p].b;
+            mse += dL * dL + da * da + db * db;
+        }
+        mu_r.L *= inv_n; mu_r.a *= inv_n; mu_r.b *= inv_n;
+        OKLab var_r{0, 0, 0}, cov{0, 0, 0};
+        for (std::size_t p = 0; p < cell_lab.size(); ++p) {
+            float drL = rendered[p].L - mu_r.L;
+            float dra = rendered[p].a - mu_r.a;
+            float drb = rendered[p].b - mu_r.b;
+            var_r.L += drL * drL;
+            var_r.a += dra * dra;
+            var_r.b += drb * drb;
+            cov.L += drL * (cell_lab[p].L - sp.mu_s.L);
+            cov.a += dra * (cell_lab[p].a - sp.mu_s.a);
+            cov.b += drb * (cell_lab[p].b - sp.mu_s.b);
+        }
+        var_r.L *= inv_n; var_r.a *= inv_n; var_r.b *= inv_n;
+        cov.L *= inv_n; cov.a *= inv_n; cov.b *= inv_n;
+        auto ssim_ch = [&](float ms, float vs, float cv, float mr, float vr) {
+            float num = (2.0f * ms * mr + C1) * (2.0f * cv + C2);
+            float den = (ms * ms + mr * mr + C1) * (vs + vr + C2);
+            return num / den;
+        };
+        float ssim = ssim_ch(sp.mu_s.L, sp.var_s.L, cov.L, mu_r.L, var_r.L)
+                   + ssim_ch(sp.mu_s.a, sp.var_s.a, cov.a, mu_r.a, var_r.a)
+                   + ssim_ch(sp.mu_s.b, sp.var_s.b, cov.b, mu_r.b, var_r.b);
+        return -ssim + kMseLambda * mse;
+    };
+
     // Precompute best hires result per cell per background color.
     // hi_best[bg][ci] = {error, fg}  — avoids redoing 16×64 work per triple.
     struct HiresResult { float error; std::uint8_t fg; };
@@ -379,7 +821,6 @@ MixedColorSelection select_colors_mixed(
             while (true) {
                 auto bg = next_bg.fetch_add(1, std::memory_order_relaxed);
                 if (bg >= n) break;
-                auto& bg_l = pal_lab[bg];
                 for (std::size_t ci = 0; ci < num_cells; ++ci) {
                     float best_err = std::numeric_limits<float>::max();
                     std::uint8_t best_fg = 0;
@@ -387,13 +828,9 @@ MixedColorSelection select_colors_mixed(
                     // (bit 3 must be clear to select hires), so fg is limited to 0-7
                     for (std::uint8_t fg = 0; fg < 8; ++fg) {
                         if (fg == bg) continue;
-                        auto& fg_l = pal_lab[fg];
-                        float err = 0.0f;
-                        for (auto& px : cells_hi[ci]) {
-                            float db = (px.L-bg_l.L)*(px.L-bg_l.L) + (px.a-bg_l.a)*(px.a-bg_l.a) + (px.b-bg_l.b)*(px.b-bg_l.b);
-                            float df = (px.L-fg_l.L)*(px.L-fg_l.L) + (px.a-fg_l.a)*(px.a-fg_l.a) + (px.b-fg_l.b)*(px.b-fg_l.b);
-                            err += std::min(db, df);
-                        }
+                        std::array<std::uint8_t, 2> colors{
+                            static_cast<std::uint8_t>(bg), fg};
+                        float err = score_cell(ci, colors, true);
                         if (err < best_err) { best_err = err; best_fg = fg; }
                     }
                     hi_best[bg][ci] = {best_err, best_fg};
@@ -423,6 +860,53 @@ MixedColorSelection select_colors_mixed(
             for (std::uint8_t k = j + 1; k < n; ++k)
                 candidates.push_back({i, j, k, 0.0f, {}, {}});
 
+    // For blur metric only: dedupe MC scoring across (triple, pc) splits
+    // that produce the same 4-set (same trick as select_colors_multicolor).
+    constexpr std::uint16_t kNoSet = 0xFFFF;
+    std::array<std::uint16_t, 65536> mc_set_index{};
+    std::vector<std::uint16_t> mc_set_masks;
+    if (metric == quantize::Metric::blur) {
+        std::ranges::fill(mc_set_index, kNoSet);
+        for (std::uint8_t a = 0; a < n; ++a)
+            for (std::uint8_t b = a + 1; b < n; ++b)
+                for (std::uint8_t c = b + 1; c < n; ++c)
+                    for (std::uint8_t d = c + 1; d < n; ++d) {
+                        if (a >= 8) continue;  // need ≥1 pc-eligible (0..7)
+                        auto mask = static_cast<std::uint16_t>(
+                            (1u << a) | (1u << b) | (1u << c) | (1u << d));
+                        mc_set_index[mask] = static_cast<std::uint16_t>(
+                            mc_set_masks.size());
+                        mc_set_masks.push_back(mask);
+                    }
+    }
+    auto num_mc_sets = mc_set_masks.size();
+    std::vector<float> mc_err_table;
+    if (metric == quantize::Metric::blur) {
+        mc_err_table.assign(num_cells * num_mc_sets,
+                              std::numeric_limits<float>::max());
+        std::atomic<std::size_t> next_cell{0};
+        auto build = [&] {
+            while (true) {
+                auto ci = next_cell.fetch_add(1, std::memory_order_relaxed);
+                if (ci >= num_cells) break;
+                for (std::size_t s = 0; s < num_mc_sets; ++s) {
+                    auto m = mc_set_masks[s];
+                    std::array<std::uint8_t, 4> colors{};
+                    std::size_t k = 0;
+                    for (std::uint8_t c = 0; c < n; ++c)
+                        if (m & (1u << c)) colors[k++] = c;
+                    mc_err_table[ci * num_mc_sets + s] =
+                        score_cell(ci, colors, false);
+                }
+            }
+        };
+        auto nt = std::min(static_cast<std::size_t>(hw_threads()), num_cells);
+        std::vector<std::jthread> threads;
+        threads.reserve(nt - 1);
+        for (std::size_t t = 1; t < nt; ++t) threads.emplace_back(build);
+        build();
+    }
+
     std::atomic<std::size_t> next{0};
     auto worker = [&] {
         while (true) {
@@ -432,6 +916,8 @@ MixedColorSelection select_colors_mixed(
             cand.per_cell.resize(num_cells);
             cand.is_hires.resize(num_cells);
             cand.total_error = 0.0f;
+            std::uint16_t triple_mask = static_cast<std::uint16_t>(
+                (1u << cand.c0) | (1u << cand.c1) | (1u << cand.c2));
 
             for (std::size_t ci = 0; ci < num_cells; ++ci) {
                 // Try MC: best per-cell color from 0-7
@@ -439,16 +925,15 @@ MixedColorSelection select_colors_mixed(
                 std::uint8_t best_mc_pc = 0;
                 for (std::uint8_t pc = 0; pc < 8; ++pc) {
                     if (pc == cand.c0 || pc == cand.c1 || pc == cand.c2) continue;
-                    std::array<std::uint8_t, 4> colors = {cand.c0, cand.c1, cand.c2, pc};
-                    float err = 0.0f;
-                    for (auto& px : cells_mc[ci]) {
-                        float best = std::numeric_limits<float>::max();
-                        for (auto c : colors) {
-                            auto& cl = pal_lab[c];
-                            float d = (px.L-cl.L)*(px.L-cl.L) + (px.a-cl.a)*(px.a-cl.a) + (px.b-cl.b)*(px.b-cl.b);
-                            if (d < best) best = d;
-                        }
-                        err += best;
+                    float err;
+                    if (metric == quantize::Metric::blur) {
+                        auto m = static_cast<std::uint16_t>(
+                            triple_mask | (1u << pc));
+                        err = mc_err_table[ci * num_mc_sets + mc_set_index[m]];
+                    } else {
+                        std::array<std::uint8_t, 4> colors = {
+                            cand.c0, cand.c1, cand.c2, pc};
+                        err = score_cell(ci, colors, false);
                     }
                     if (err < best_mc_err) { best_mc_err = err; best_mc_pc = pc; }
                 }
@@ -536,16 +1021,7 @@ MixedColorSelection select_colors_mixed(
         for (std::uint8_t pc = 0; pc < 8; ++pc) {
             if (pc == bg_color || pc == mc1_color || pc == mc2_color) continue;
             std::array<std::uint8_t, 4> colors = {bg_color, mc1_color, mc2_color, pc};
-            float err = 0.0f;
-            for (auto& px : cells_mc[ci]) {
-                float best = std::numeric_limits<float>::max();
-                for (auto c : colors) {
-                    auto& cl = pal_lab[c];
-                    float d = (px.L-cl.L)*(px.L-cl.L) + (px.a-cl.a)*(px.a-cl.a) + (px.b-cl.b)*(px.b-cl.b);
-                    if (d < best) best = d;
-                }
-                err += best;
-            }
+            float err = score_cell(ci, colors, false);
             if (err < best_mc_err) { best_mc_err = err; best_mc_pc = pc; }
         }
         float mc_avg = best_mc_err / 32.0f;
@@ -837,7 +1313,8 @@ void refine_charset(
     std::vector<std::uint8_t>& assignments,  // cell -> pattern idx
     std::vector<std::uint8_t>& color_ram,    // cell -> per-cell color
     int max_iters,
-    bool recompute_centroids) {
+    bool recompute_centroids,
+    quantize::Metric metric = quantize::Metric::mse) {
 
     auto pal_lab = precompute_lab(palette);
     auto n_pal = static_cast<std::uint8_t>(palette.size());
@@ -857,8 +1334,324 @@ void refine_charset(
                         image[cx * cell_w + dx, cy * 8 + dy]));
         }
 
+    // ---- Per-cell metric precompute ----
+    namespace bu = quantize::blur_util;
+    std::vector<std::array<bu::Tap, 9>> kernel_taps;
+    std::vector<std::vector<OKLab>> blurred_src;
+    std::vector<bu::ClosedCtx> closed_ctx;  // hires blur: closed-form invariants
+    struct CellSsim {
+        OKLab mu_s, var_s, total_sum;
+        float A_norm;
+    };
+    std::vector<CellSsim> ssim_pre;
+
+    // MC-blur closed-form precompute (filled lazily once patterns are known).
+    //
+    // For a fixed pattern, B[p] ∈ {0,1,2,3} comes directly from the
+    // pattern bits (not nearest-colour). Class-c map m_k(q) = Σ_{p∈class k}
+    // K[q,p] is then pattern-only. Combined with per-cell B''[p] =
+    // Σ_q K[q,p]·blurred_src[q] (the transpose-blur of the source), the
+    // per-(cell, pattern, pc) error reduces to
+    //   err = cp_const + Q_pat·||p_pc||² + p_pc·cp_lin
+    // where cp_const, cp_lin are O(1)-evaluable per (cell, pattern). Drops
+    // the per-call cost from ~1200 ops to ~5 (~12× on the assign loop).
+    std::vector<std::array<OKLab, 64>> b_double_blurred;
+    std::vector<float> sum_DD;
+    std::array<float, 256> Q_pat{};
+    std::array<OKLab, 256> V_pat{};
+    std::array<float, 256> W_pat{};
+    std::vector<float> cp_const;     // [ci * 256 + pat]
+    std::vector<OKLab> cp_lin;       // [ci * 256 + pat]
+    bool mc_blur_precompute_valid = false;
+    auto mc_blur_build_precompute = [&] {
+        // Per-cell: B''[p] = Σ_q K[q,p]·blurred_src[q]  and  sum_DD[ci].
+        if (b_double_blurred.empty()) {
+            b_double_blurred.assign(num_cells, std::array<OKLab, 64>{});
+            sum_DD.assign(num_cells, 0.0f);
+            for (std::size_t ci = 0; ci < num_cells; ++ci) {
+                auto& bsrc = blurred_src[ci];
+                auto& bb = b_double_blurred[ci];
+                for (std::size_t q = 0; q < pixels_per_cell; ++q) {
+                    sum_DD[ci] += bsrc[q].L * bsrc[q].L
+                                + bsrc[q].a * bsrc[q].a
+                                + bsrc[q].b * bsrc[q].b;
+                    for (auto& tap : kernel_taps[q]) {
+                        bb[tap.q].L += tap.w * bsrc[q].L;
+                        bb[tap.q].a += tap.w * bsrc[q].a;
+                        bb[tap.q].b += tap.w * bsrc[q].b;
+                    }
+                }
+            }
+        }
+        // Per-pattern: pat_class[pat][p] ∈ {0,1,2,3}, then derive m_k(q),
+        // A_jk, then W_pat / V_pat / Q_pat.
+        auto& p_bg  = pal_lab[bg];
+        auto& p_mc1 = pal_lab[mc1];
+        auto& p_mc2 = pal_lab[mc2];
+        float bg_norm  = p_bg.L*p_bg.L + p_bg.a*p_bg.a + p_bg.b*p_bg.b;
+        float mc1_norm = p_mc1.L*p_mc1.L + p_mc1.a*p_mc1.a + p_mc1.b*p_mc1.b;
+        float mc2_norm = p_mc2.L*p_mc2.L + p_mc2.a*p_mc2.a + p_mc2.b*p_mc2.b;
+        float bg_mc1 = p_bg.L*p_mc1.L + p_bg.a*p_mc1.a + p_bg.b*p_mc1.b;
+        float bg_mc2 = p_bg.L*p_mc2.L + p_bg.a*p_mc2.a + p_bg.b*p_mc2.b;
+        float mc1_mc2 = p_mc1.L*p_mc2.L + p_mc1.a*p_mc2.a + p_mc1.b*p_mc2.b;
+        // Per-pattern class lists.
+        std::array<std::array<std::array<std::uint8_t, 32>, 4>, 256> pat_class_pixels{};
+        std::array<std::array<std::uint8_t, 4>, 256> pat_class_count{};
+        for (std::size_t pi = 0; pi < 256; ++pi) {
+            auto& pat = patterns[pi];
+            for (std::size_t row = 0; row < 8; ++row) {
+                for (std::size_t col = 0; col < 4; ++col) {
+                    auto bits = static_cast<std::uint8_t>(
+                        (pat[row] >> (6 - col * 2)) & 0x03);
+                    auto p = static_cast<std::uint8_t>(row * 4 + col);
+                    pat_class_pixels[pi][bits][pat_class_count[pi][bits]++] = p;
+                }
+            }
+        }
+        // Per-pattern m_k(q) and A_jk.
+        for (std::size_t pi = 0; pi < 256; ++pi) {
+            std::array<std::array<float, 32>, 4> m{};
+            for (std::uint8_t k = 0; k < 4; ++k) {
+                for (std::uint8_t i = 0; i < pat_class_count[pi][k]; ++i) {
+                    auto p = pat_class_pixels[pi][k][i];
+                    // Find taps[q] entries that read pixel p — equivalent to:
+                    // m_k(q) += K[q, p] for each q.
+                    for (std::size_t q = 0; q < pixels_per_cell; ++q)
+                        for (auto& tap : kernel_taps[q])
+                            if (tap.q == p) m[k][q] += tap.w;
+                }
+            }
+            float A00 = 0, A11 = 0, A22 = 0, A33 = 0;
+            float A01 = 0, A02 = 0, A03 = 0, A12 = 0, A13 = 0, A23 = 0;
+            for (std::size_t q = 0; q < pixels_per_cell; ++q) {
+                A00 += m[0][q]*m[0][q]; A11 += m[1][q]*m[1][q];
+                A22 += m[2][q]*m[2][q]; A33 += m[3][q]*m[3][q];
+                A01 += m[0][q]*m[1][q]; A02 += m[0][q]*m[2][q];
+                A03 += m[0][q]*m[3][q]; A12 += m[1][q]*m[2][q];
+                A13 += m[1][q]*m[3][q]; A23 += m[2][q]*m[3][q];
+            }
+            W_pat[pi] = A00 * bg_norm + A11 * mc1_norm + A22 * mc2_norm
+                      + 2.0f * (A01 * bg_mc1 + A02 * bg_mc2 + A12 * mc1_mc2);
+            V_pat[pi].L = A03 * p_bg.L + A13 * p_mc1.L + A23 * p_mc2.L;
+            V_pat[pi].a = A03 * p_bg.a + A13 * p_mc1.a + A23 * p_mc2.a;
+            V_pat[pi].b = A03 * p_bg.b + A13 * p_mc1.b + A23 * p_mc2.b;
+            Q_pat[pi] = A33;
+        }
+        // Per (cell, pattern): DM_k via B''[p] gathered over class lists,
+        // then cp_const = W_pat + R_cp, cp_lin = 2·V_pat + S_cp.
+        cp_const.assign(num_cells * 256, 0.0f);
+        cp_lin.assign(num_cells * 256, OKLab{0, 0, 0});
+        std::atomic<std::size_t> next{0};
+        auto build = [&] {
+            while (true) {
+                auto ci = next.fetch_add(1, std::memory_order_relaxed);
+                if (ci >= num_cells) break;
+                auto& bb = b_double_blurred[ci];
+                for (std::size_t pi = 0; pi < 256; ++pi) {
+                    OKLab DM[4] = {{0,0,0},{0,0,0},{0,0,0},{0,0,0}};
+                    for (std::uint8_t k = 0; k < 4; ++k) {
+                        for (std::uint8_t i = 0; i < pat_class_count[pi][k]; ++i) {
+                            auto p = pat_class_pixels[pi][k][i];
+                            DM[k].L += bb[p].L;
+                            DM[k].a += bb[p].a;
+                            DM[k].b += bb[p].b;
+                        }
+                    }
+                    float R_cp = -2.0f * (DM[0].L * p_bg.L + DM[0].a * p_bg.a
+                                                  + DM[0].b * p_bg.b
+                                       + DM[1].L * p_mc1.L + DM[1].a * p_mc1.a
+                                                  + DM[1].b * p_mc1.b
+                                       + DM[2].L * p_mc2.L + DM[2].a * p_mc2.a
+                                                  + DM[2].b * p_mc2.b)
+                              + sum_DD[ci];
+                    cp_const[ci * 256 + pi] = W_pat[pi] + R_cp;
+                    cp_lin[ci * 256 + pi].L = 2.0f * V_pat[pi].L - 2.0f * DM[3].L;
+                    cp_lin[ci * 256 + pi].a = 2.0f * V_pat[pi].a - 2.0f * DM[3].a;
+                    cp_lin[ci * 256 + pi].b = 2.0f * V_pat[pi].b - 2.0f * DM[3].b;
+                }
+            }
+        };
+        auto nt = std::min(static_cast<std::size_t>(hw_threads()), num_cells);
+        std::vector<std::jthread> threads;
+        threads.reserve(nt - 1);
+        for (std::size_t t = 1; t < nt; ++t) threads.emplace_back(build);
+        build();
+        mc_blur_precompute_valid = true;
+    };
+
+    if (metric == quantize::Metric::blur) {
+        kernel_taps = bu::build_kernel_taps(cell_w, 8);
+        blurred_src.resize(num_cells);
+        for (std::size_t ci = 0; ci < num_cells; ++ci)
+            blurred_src[ci] = bu::compute_blurred(cells_lab[ci], kernel_taps);
+        if (!multicolor) {
+            closed_ctx.resize(num_cells);
+            for (std::size_t ci = 0; ci < num_cells; ++ci)
+                closed_ctx[ci] = bu::make_closed_ctx(blurred_src[ci]);
+        }
+    } else if (metric == quantize::Metric::ssim) {
+        ssim_pre.resize(num_cells);
+        float inv_n = 1.0f / static_cast<float>(pixels_per_cell);
+        for (std::size_t ci = 0; ci < num_cells; ++ci) {
+            OKLab mu{0, 0, 0};
+            for (auto& v : cells_lab[ci]) {
+                mu.L += v.L; mu.a += v.a; mu.b += v.b;
+            }
+            ssim_pre[ci].total_sum = mu;
+            mu.L *= inv_n; mu.a *= inv_n; mu.b *= inv_n;
+            OKLab var{0, 0, 0};
+            float A = 0;
+            for (auto& v : cells_lab[ci]) {
+                float dL = v.L - mu.L;
+                float da = v.a - mu.a;
+                float db = v.b - mu.b;
+                var.L += dL * dL;
+                var.a += da * da;
+                var.b += db * db;
+                A += v.L * v.L + v.a * v.a + v.b * v.b;
+            }
+            var.L *= inv_n; var.a *= inv_n; var.b *= inv_n;
+            ssim_pre[ci].mu_s = mu;
+            ssim_pre[ci].var_s = var;
+            ssim_pre[ci].A_norm = A;
+        }
+    }
+
+    // Render a (pattern, colors) into an OKLab cell.
+    auto render_cell = [&](const Pattern& pat, std::uint8_t pc,
+                            std::array<OKLab, 64>& out) {
+        if (multicolor) {
+            std::array<OKLab, 4> colors = {
+                pal_lab[bg], pal_lab[mc1], pal_lab[mc2], pal_lab[pc]};
+            for (std::size_t row = 0; row < 8; ++row)
+                for (std::size_t col = 0; col < 4; ++col) {
+                    auto bits = static_cast<std::size_t>(
+                        (pat[row] >> (6 - col * 2)) & 0x03);
+                    out[row * 4 + col] = colors[bits];
+                }
+        } else {
+            auto& bgl = pal_lab[bg];
+            auto& fgl = pal_lab[pc];
+            for (std::size_t row = 0; row < 8; ++row)
+                for (std::size_t col = 0; col < 8; ++col) {
+                    bool is_fg = ((pat[row] >> (7 - col)) & 1) != 0;
+                    out[row * 8 + col] = is_fg ? fgl : bgl;
+                }
+        }
+    };
+
+    // Metric-aware per-cell error for a candidate (pattern, pc).
+    // For blur: render → blur → MSE vs precomputed blurred source.
+    // For ssim: render → SSIM (sum over L/a/b) + λ·MSE hybrid.
+    // For mse: delegates to the original cell_pattern_error.
+    // Fast O(1) per-(cell, pat, pc) using the MC-blur precompute. Only
+    // valid when patterns haven't been mutated since precompute.
+    auto cell_err_mc_blur_fast = [&](std::size_t ci, std::size_t pat_idx,
+                                       std::uint8_t pc) {
+        auto& p_pc = pal_lab[pc];
+        float pc_norm = p_pc.L*p_pc.L + p_pc.a*p_pc.a + p_pc.b*p_pc.b;
+        auto k = ci * 256 + pat_idx;
+        auto& lin = cp_lin[k];
+        return cp_const[k] + Q_pat[pat_idx] * pc_norm
+             + p_pc.L * lin.L + p_pc.a * lin.a + p_pc.b * lin.b;
+    };
+
+    auto cell_err_metric = [&](std::size_t ci, const Pattern& pat,
+                                std::uint8_t pc) -> float {
+        if (metric == quantize::Metric::mse) {
+            return cell_pattern_error(cells_lab[ci], pat, pal_lab,
+                                       multicolor, bg, mc1, mc2, pc);
+        }
+        if (metric == quantize::Metric::blur && !multicolor) {
+            // Closed-form 2-colour: bitmap B[p] = pattern bit at pixel p.
+            std::uint64_t B = 0;
+            for (std::size_t row = 0; row < 8; ++row) {
+                auto byte = pat[row];
+                for (std::size_t col = 0; col < 8; ++col) {
+                    if ((byte >> (7 - col)) & 1)
+                        B |= std::uint64_t{1} << (row * 8 + col);
+                }
+            }
+            return bu::score_cell_blur_2color_bitmap(
+                B, blurred_src[ci], kernel_taps, pal_lab,
+                closed_ctx[ci], bg, pc);
+        }
+        std::array<OKLab, 64> rendered{};
+        render_cell(pat, pc, rendered);
+        if (metric == quantize::Metric::blur) {
+            // MC: 4-colour pattern, no closed-form; blur the rendered cell
+            // and MSE against the precomputed blurred source.
+            float err = 0;
+            auto& bsrc = blurred_src[ci];
+            for (std::size_t p = 0; p < pixels_per_cell; ++p) {
+                OKLab br{0, 0, 0};
+                for (auto& tap : kernel_taps[p]) {
+                    auto& v = rendered[tap.q];
+                    br.L += tap.w * v.L;
+                    br.a += tap.w * v.a;
+                    br.b += tap.w * v.b;
+                }
+                float dL = bsrc[p].L - br.L;
+                float da = bsrc[p].a - br.a;
+                float db = bsrc[p].b - br.b;
+                err += dL * dL + da * da + db * db;
+            }
+            return err;
+        }
+        // ssim hybrid.
+        constexpr float C1 = 0.01f * 0.01f;
+        constexpr float C2 = 0.03f * 0.03f;
+        constexpr float kMseLambda = 1.0f;
+        float inv_n = 1.0f / static_cast<float>(pixels_per_cell);
+        auto& sp = ssim_pre[ci];
+        OKLab mu_r{0, 0, 0};
+        float mse = 0;
+        for (std::size_t p = 0; p < pixels_per_cell; ++p) {
+            mu_r.L += rendered[p].L;
+            mu_r.a += rendered[p].a;
+            mu_r.b += rendered[p].b;
+            float dL = cells_lab[ci][p].L - rendered[p].L;
+            float da = cells_lab[ci][p].a - rendered[p].a;
+            float db = cells_lab[ci][p].b - rendered[p].b;
+            mse += dL * dL + da * da + db * db;
+        }
+        mu_r.L *= inv_n; mu_r.a *= inv_n; mu_r.b *= inv_n;
+        OKLab var_r{0, 0, 0}, cov{0, 0, 0};
+        for (std::size_t p = 0; p < pixels_per_cell; ++p) {
+            float drL = rendered[p].L - mu_r.L;
+            float dra = rendered[p].a - mu_r.a;
+            float drb = rendered[p].b - mu_r.b;
+            var_r.L += drL * drL;
+            var_r.a += dra * dra;
+            var_r.b += drb * drb;
+            cov.L += drL * (cells_lab[ci][p].L - sp.mu_s.L);
+            cov.a += dra * (cells_lab[ci][p].a - sp.mu_s.a);
+            cov.b += drb * (cells_lab[ci][p].b - sp.mu_s.b);
+        }
+        var_r.L *= inv_n; var_r.a *= inv_n; var_r.b *= inv_n;
+        cov.L *= inv_n; cov.a *= inv_n; cov.b *= inv_n;
+        auto ssim_ch = [&](float ms, float vs, float cv,
+                            float mr, float vr) {
+            float num = (2.0f * ms * mr + C1) * (2.0f * cv + C2);
+            float den = (ms * ms + mr * mr + C1) * (vs + vr + C2);
+            return num / den;
+        };
+        float ssim = ssim_ch(sp.mu_s.L, sp.var_s.L, cov.L, mu_r.L, var_r.L)
+                   + ssim_ch(sp.mu_s.a, sp.var_s.a, cov.a, mu_r.a, var_r.a)
+                   + ssim_ch(sp.mu_s.b, sp.var_s.b, cov.b, mu_r.b, var_r.b);
+        return -ssim + kMseLambda * mse;
+    };
+
     for (int iter = 0; iter < max_iters; ++iter) {
         std::size_t changes = 0;
+
+        // (Re)build the MC-blur precompute when patterns may have changed.
+        // First iter always builds; subsequent iters only rebuild after a
+        // centroid recompute (Step 3) mutated patterns.
+        bool use_mc_blur_fast = (metric == quantize::Metric::blur && multicolor);
+        if (use_mc_blur_fast && !mc_blur_precompute_valid) {
+            mc_blur_build_precompute();
+        }
 
         // Step 1: Reassign each cell to best pattern (with current per-cell color)
         std::atomic<std::size_t> next_cell{0};
@@ -870,19 +1663,29 @@ void refine_charset(
                 if (ci >= num_cells) break;
 
                 auto current_pc = color_ram[ci];
-                float best_err = cell_pattern_error(
-                    cells_lab[ci], patterns[assignments[ci]], pal_lab,
-                    multicolor, bg, mc1, mc2, current_pc);
+                float best_err;
                 auto best_pat = assignments[ci];
-
-                for (std::size_t p = 0; p < 256; ++p) {
-                    if (p == assignments[ci]) continue;
-                    float err = cell_pattern_error(
-                        cells_lab[ci], patterns[p], pal_lab,
-                        multicolor, bg, mc1, mc2, current_pc);
-                    if (err < best_err) {
-                        best_err = err;
-                        best_pat = static_cast<std::uint8_t>(p);
+                if (use_mc_blur_fast) {
+                    best_err = cell_err_mc_blur_fast(ci, assignments[ci],
+                                                       current_pc);
+                    for (std::size_t p = 0; p < 256; ++p) {
+                        if (p == assignments[ci]) continue;
+                        float err = cell_err_mc_blur_fast(ci, p, current_pc);
+                        if (err < best_err) {
+                            best_err = err;
+                            best_pat = static_cast<std::uint8_t>(p);
+                        }
+                    }
+                } else {
+                    best_err = cell_err_metric(ci, patterns[assignments[ci]],
+                                                  current_pc);
+                    for (std::size_t p = 0; p < 256; ++p) {
+                        if (p == assignments[ci]) continue;
+                        float err = cell_err_metric(ci, patterns[p], current_pc);
+                        if (err < best_err) {
+                            best_err = err;
+                            best_pat = static_cast<std::uint8_t>(p);
+                        }
                     }
                 }
 
@@ -914,9 +1717,9 @@ void refine_charset(
                 if (multicolor && (pc == bg || pc == mc1 || pc == mc2)) continue;
                 if (!multicolor && pc == bg) continue;
 
-                float err = cell_pattern_error(
-                    cells_lab[ci], patterns[assignments[ci]], pal_lab,
-                    multicolor, bg, mc1, mc2, pc);
+                float err = use_mc_blur_fast
+                    ? cell_err_mc_blur_fast(ci, assignments[ci], pc)
+                    : cell_err_metric(ci, patterns[assignments[ci]], pc);
                 if (err < best_err) { best_err = err; best_pc = pc; }
             }
 
@@ -929,7 +1732,18 @@ void refine_charset(
         // Step 3: Recompute centroids — optimize each pixel of each pattern.
         // Only when recompute_centroids is set (skipped when dithering is active
         // to preserve dither patterns).
+        //
+        // For MSE: per-pixel decisions are independent, picked via simple
+        //   sum-of-distances over cells assigned to each pattern.
+        // For blur/ssim: per-pixel decisions are *coupled* (kernel for blur,
+        //   joint stats for ssim), so we do a greedy single pass per pixel —
+        //   try each candidate value, score the full cell metric summed over
+        //   cells, keep the best. Slower per iter but converges in fewer LBG
+        //   iterations because patterns aren't fighting the assign metric.
         if (recompute_centroids) {
+            // Centroids modify patterns; the MC-blur precompute is now
+            // stale and must be rebuilt next iter.
+            mc_blur_precompute_valid = false;
             std::array<std::vector<std::size_t>, 256> pat_cells;
             for (std::size_t ci = 0; ci < num_cells; ++ci)
                 pat_cells[assignments[ci]].push_back(ci);
@@ -937,55 +1751,102 @@ void refine_charset(
             for (std::size_t p = 0; p < 256; ++p) {
                 if (pat_cells[p].empty()) continue;
 
-                Pattern new_pat{};
-                if (multicolor) {
-                    for (std::size_t row = 0; row < 8; ++row) {
-                        std::uint8_t byte = 0;
-                        for (std::size_t col = 0; col < 4; ++col) {
-                            auto pi = row * 4 + col;
-                            float best_bit_err = std::numeric_limits<float>::max();
-                            std::uint8_t best_bits = 0;
-
-                            for (std::uint8_t bits = 0; bits < 4; ++bits) {
-                                float total = 0.0f;
-                                for (auto ci : pat_cells[p]) {
-                                    std::array<std::uint8_t, 4> pal_indices = {
-                                        bg, mc1, mc2, color_ram[ci]};
-                                    auto& c = pal_lab[pal_indices[bits]];
-                                    auto& px = cells_lab[ci][pi];
-                                    float dL = px.L-c.L, da = px.a-c.a, db = px.b-c.b;
-                                    total += dL*dL + da*da + db*db;
+                Pattern new_pat = patterns[p];
+                if (metric == quantize::Metric::mse) {
+                    if (multicolor) {
+                        for (std::size_t row = 0; row < 8; ++row) {
+                            std::uint8_t byte = 0;
+                            for (std::size_t col = 0; col < 4; ++col) {
+                                auto pi = row * 4 + col;
+                                float best_bit_err = std::numeric_limits<float>::max();
+                                std::uint8_t best_bits = 0;
+                                for (std::uint8_t bits = 0; bits < 4; ++bits) {
+                                    float total = 0.0f;
+                                    for (auto ci : pat_cells[p]) {
+                                        std::array<std::uint8_t, 4> pal_indices = {
+                                            bg, mc1, mc2, color_ram[ci]};
+                                        auto& c = pal_lab[pal_indices[bits]];
+                                        auto& px = cells_lab[ci][pi];
+                                        float dL = px.L-c.L, da = px.a-c.a, db = px.b-c.b;
+                                        total += dL*dL + da*da + db*db;
+                                    }
+                                    if (total < best_bit_err) {
+                                        best_bit_err = total;
+                                        best_bits = bits;
+                                    }
                                 }
-                                if (total < best_bit_err) {
-                                    best_bit_err = total;
-                                    best_bits = bits;
-                                }
+                                byte |= static_cast<std::uint8_t>(
+                                    best_bits << (6 - col * 2));
                             }
-                            byte |= static_cast<std::uint8_t>(
-                                best_bits << (6 - col * 2));
+                            new_pat[row] = byte;
                         }
-                        new_pat[row] = byte;
+                    } else {
+                        for (std::size_t row = 0; row < 8; ++row) {
+                            std::uint8_t byte = 0;
+                            for (std::size_t col = 0; col < 8; ++col) {
+                                auto pi = row * 8 + col;
+                                float err_bg = 0.0f, err_fg = 0.0f;
+                                for (auto ci : pat_cells[p]) {
+                                    auto& px = cells_lab[ci][pi];
+                                    auto& bl = pal_lab[bg];
+                                    auto& fl = pal_lab[color_ram[ci]];
+                                    float dL, da, db;
+                                    dL = px.L-bl.L; da = px.a-bl.a; db = px.b-bl.b;
+                                    err_bg += dL*dL + da*da + db*db;
+                                    dL = px.L-fl.L; da = px.a-fl.a; db = px.b-fl.b;
+                                    err_fg += dL*dL + da*da + db*db;
+                                }
+                                if (err_fg < err_bg)
+                                    byte |= static_cast<std::uint8_t>(0x80 >> col);
+                            }
+                            new_pat[row] = byte;
+                        }
                     }
                 } else {
-                    for (std::size_t row = 0; row < 8; ++row) {
-                        std::uint8_t byte = 0;
-                        for (std::size_t col = 0; col < 8; ++col) {
-                            auto pi = row * 8 + col;
-                            float err_bg = 0.0f, err_fg = 0.0f;
-                            for (auto ci : pat_cells[p]) {
-                                auto& px = cells_lab[ci][pi];
-                                auto& bl = pal_lab[bg];
-                                auto& fl = pal_lab[color_ram[ci]];
-                                float dL, da, db;
-                                dL = px.L-bl.L; da = px.a-bl.a; db = px.b-bl.b;
-                                err_bg += dL*dL + da*da + db*db;
-                                dL = px.L-fl.L; da = px.a-fl.a; db = px.b-fl.b;
-                                err_fg += dL*dL + da*da + db*db;
+                    // Blur / SSIM: Direct Binary Search. Per-pixel greedy
+                    // flips are coupled by the blur kernel, so a single
+                    // pass is not enough — flipping pixel A may unlock
+                    // a better choice at neighboring pixel B that the
+                    // first pass evaluated against the old A. We iterate
+                    // until a full pass yields no flips. Capped at 8
+                    // passes (typically converges in 2-3).
+                    auto bit_count = multicolor ? 4 : 2;
+                    for (int dbs_pass = 0; dbs_pass < 8; ++dbs_pass) {
+                        bool any_flip = false;
+                        for (std::size_t row = 0; row < 8; ++row) {
+                            for (std::size_t col = 0; col < cell_w; ++col) {
+                                auto shift = multicolor
+                                    ? static_cast<std::uint8_t>(6 - col * 2)
+                                    : static_cast<std::uint8_t>(7 - col);
+                                auto mask = static_cast<std::uint8_t>(
+                                    multicolor ? (0x03u << shift) : (0x01u << shift));
+                                auto current_bits = static_cast<std::uint8_t>(
+                                    (new_pat[row] & mask) >> shift);
+                                float best_total = std::numeric_limits<float>::max();
+                                std::uint8_t best_bits = current_bits;
+                                for (int bits = 0; bits < bit_count; ++bits) {
+                                    Pattern trial = new_pat;
+                                    trial[row] = static_cast<std::uint8_t>(
+                                        (trial[row] & ~mask) |
+                                        (static_cast<std::uint8_t>(bits) << shift));
+                                    float total = 0.0f;
+                                    for (auto ci : pat_cells[p]) {
+                                        total += cell_err_metric(ci, trial,
+                                                                  color_ram[ci]);
+                                    }
+                                    if (total < best_total) {
+                                        best_total = total;
+                                        best_bits = static_cast<std::uint8_t>(bits);
+                                    }
+                                }
+                                if (best_bits != current_bits) {
+                                    new_pat[row] = static_cast<std::uint8_t>(
+                                        (new_pat[row] & ~mask) | (best_bits << shift));
+                                    any_flip = true;
+                                }
                             }
-                            if (err_fg < err_bg)
-                                byte |= static_cast<std::uint8_t>(0x80 >> col);
                         }
-                        new_pat[row] = byte;
+                        if (!any_flip) break;
                     }
                 }
 
@@ -1017,7 +1878,8 @@ void refine_charset_mixed(
     std::vector<std::uint8_t>& assignments,
     std::vector<std::uint8_t>& color_ram,
     const std::vector<bool>& cell_is_hires,
-    int max_iters, bool recompute_centroids) {
+    int max_iters, bool recompute_centroids,
+    quantize::Metric metric = quantize::Metric::mse) {
 
     auto pal_lab = precompute_lab(palette);
     auto num_cells = cols * rows;
@@ -1047,8 +1909,299 @@ void refine_charset_mixed(
             }
         }
 
+    // Per-cell metric precompute. Mixed mode has two cell shapes (8×8
+    // hires / 4×8 MC), so we keep separate kernel-tap tables and per-cell
+    // SSIM stats, indexed by the cell's hires/MC mode.
+    namespace bu = quantize::blur_util;
+    auto kernel_taps_hi = bu::build_kernel_taps(8, 8);
+    auto kernel_taps_mc = bu::build_kernel_taps(4, 8);
+
+    std::vector<std::vector<OKLab>> blurred_src;
+    std::vector<bu::ClosedCtx> closed_ctx;  // hires cells only
+    struct CellSsim { OKLab mu_s, var_s; };
+    std::vector<CellSsim> ssim_pre;
+    // MC-cell blur precompute (same closed-form decomposition used by
+    // refine_charset; see comment there). Built lazily once patterns
+    // are known and rebuilt only after a centroid recompute.
+    std::vector<std::array<OKLab, 32>> mc_b_double_blurred;
+    std::vector<float> mc_sum_DD;
+    std::array<float, 256> mc_Q_pat{};
+    std::array<OKLab, 256> mc_V_pat{};
+    std::array<float, 256> mc_W_pat{};
+    std::vector<float> mc_cp_const;     // [ci * 256 + pat]; ci must be MC
+    std::vector<OKLab> mc_cp_lin;
+    bool mc_blur_precompute_valid = false;
+
+    if (metric == quantize::Metric::blur) {
+        blurred_src.resize(num_cells);
+        closed_ctx.resize(num_cells);
+        for (std::size_t ci = 0; ci < num_cells; ++ci) {
+            auto& taps = cell_is_hires[ci] ? kernel_taps_hi : kernel_taps_mc;
+            blurred_src[ci] = bu::compute_blurred(cells_lab[ci], taps);
+            if (cell_is_hires[ci])
+                closed_ctx[ci] = bu::make_closed_ctx(blurred_src[ci]);
+        }
+    } else if (metric == quantize::Metric::ssim) {
+        ssim_pre.resize(num_cells);
+        for (std::size_t ci = 0; ci < num_cells; ++ci) {
+            std::size_t n_pix = cells_lab[ci].size();
+            float inv_n = 1.0f / static_cast<float>(n_pix);
+            OKLab mu{0, 0, 0};
+            for (auto& v : cells_lab[ci]) { mu.L += v.L; mu.a += v.a; mu.b += v.b; }
+            mu.L *= inv_n; mu.a *= inv_n; mu.b *= inv_n;
+            OKLab var{0, 0, 0};
+            for (auto& v : cells_lab[ci]) {
+                float dL = v.L - mu.L, da = v.a - mu.a, db = v.b - mu.b;
+                var.L += dL * dL;
+                var.a += da * da;
+                var.b += db * db;
+            }
+            var.L *= inv_n; var.a *= inv_n; var.b *= inv_n;
+            ssim_pre[ci].mu_s = mu;
+            ssim_pre[ci].var_s = var;
+        }
+    }
+
+    // Render a (pattern, pc) into an OKLab cell using the cell's mode.
+    auto render_cell = [&](std::size_t ci, const Pattern& pat,
+                            std::uint8_t pc, std::array<OKLab, 64>& out) {
+        bool is_hi = cell_is_hires[ci];
+        if (!is_hi) {
+            std::array<OKLab, 4> colors = {
+                pal_lab[bg], pal_lab[mc1], pal_lab[mc2], pal_lab[pc]};
+            for (std::size_t row = 0; row < 8; ++row)
+                for (std::size_t col = 0; col < 4; ++col) {
+                    auto bits = static_cast<std::size_t>(
+                        (pat[row] >> (6 - col * 2)) & 0x03);
+                    out[row * 4 + col] = colors[bits];
+                }
+        } else {
+            auto& bgl = pal_lab[bg];
+            auto& fgl = pal_lab[pc];
+            for (std::size_t row = 0; row < 8; ++row)
+                for (std::size_t col = 0; col < 8; ++col) {
+                    bool is_fg = ((pat[row] >> (7 - col)) & 1) != 0;
+                    out[row * 8 + col] = is_fg ? fgl : bgl;
+                }
+        }
+    };
+
+    // MC-blur precompute builder (mirrors refine_charset; only MC cells).
+    auto mc_blur_build_precompute = [&] {
+        if (mc_b_double_blurred.empty()) {
+            mc_b_double_blurred.assign(num_cells, std::array<OKLab, 32>{});
+            mc_sum_DD.assign(num_cells, 0.0f);
+            for (std::size_t ci = 0; ci < num_cells; ++ci) {
+                if (cell_is_hires[ci]) continue;
+                auto& bsrc = blurred_src[ci];
+                auto& bb = mc_b_double_blurred[ci];
+                for (std::size_t q = 0; q < 32; ++q) {
+                    mc_sum_DD[ci] += bsrc[q].L * bsrc[q].L
+                                   + bsrc[q].a * bsrc[q].a
+                                   + bsrc[q].b * bsrc[q].b;
+                    for (auto& tap : kernel_taps_mc[q]) {
+                        bb[tap.q].L += tap.w * bsrc[q].L;
+                        bb[tap.q].a += tap.w * bsrc[q].a;
+                        bb[tap.q].b += tap.w * bsrc[q].b;
+                    }
+                }
+            }
+        }
+        auto& p_bg  = pal_lab[bg];
+        auto& p_mc1 = pal_lab[mc1];
+        auto& p_mc2 = pal_lab[mc2];
+        float bg_norm  = p_bg.L*p_bg.L + p_bg.a*p_bg.a + p_bg.b*p_bg.b;
+        float mc1_norm = p_mc1.L*p_mc1.L + p_mc1.a*p_mc1.a + p_mc1.b*p_mc1.b;
+        float mc2_norm = p_mc2.L*p_mc2.L + p_mc2.a*p_mc2.a + p_mc2.b*p_mc2.b;
+        float bg_mc1 = p_bg.L*p_mc1.L + p_bg.a*p_mc1.a + p_bg.b*p_mc1.b;
+        float bg_mc2 = p_bg.L*p_mc2.L + p_bg.a*p_mc2.a + p_bg.b*p_mc2.b;
+        float mc1_mc2 = p_mc1.L*p_mc2.L + p_mc1.a*p_mc2.a + p_mc1.b*p_mc2.b;
+        std::array<std::array<std::array<std::uint8_t, 32>, 4>, 256> pat_class_pixels{};
+        std::array<std::array<std::uint8_t, 4>, 256> pat_class_count{};
+        for (std::size_t pi = 0; pi < 256; ++pi) {
+            if (pattern_is_hires[pi]) continue;
+            auto& pat = patterns[pi];
+            for (std::size_t row = 0; row < 8; ++row) {
+                for (std::size_t col = 0; col < 4; ++col) {
+                    auto bits = static_cast<std::uint8_t>(
+                        (pat[row] >> (6 - col * 2)) & 0x03);
+                    auto p = static_cast<std::uint8_t>(row * 4 + col);
+                    pat_class_pixels[pi][bits][pat_class_count[pi][bits]++] = p;
+                }
+            }
+        }
+        for (std::size_t pi = 0; pi < 256; ++pi) {
+            if (pattern_is_hires[pi]) continue;
+            std::array<std::array<float, 32>, 4> m{};
+            for (std::uint8_t k = 0; k < 4; ++k) {
+                for (std::uint8_t i = 0; i < pat_class_count[pi][k]; ++i) {
+                    auto p = pat_class_pixels[pi][k][i];
+                    for (std::size_t q = 0; q < 32; ++q)
+                        for (auto& tap : kernel_taps_mc[q])
+                            if (tap.q == p) m[k][q] += tap.w;
+                }
+            }
+            float A00 = 0, A11 = 0, A22 = 0, A33 = 0;
+            float A01 = 0, A02 = 0, A03 = 0, A12 = 0, A13 = 0, A23 = 0;
+            for (std::size_t q = 0; q < 32; ++q) {
+                A00 += m[0][q]*m[0][q]; A11 += m[1][q]*m[1][q];
+                A22 += m[2][q]*m[2][q]; A33 += m[3][q]*m[3][q];
+                A01 += m[0][q]*m[1][q]; A02 += m[0][q]*m[2][q];
+                A03 += m[0][q]*m[3][q]; A12 += m[1][q]*m[2][q];
+                A13 += m[1][q]*m[3][q]; A23 += m[2][q]*m[3][q];
+            }
+            mc_W_pat[pi] = A00 * bg_norm + A11 * mc1_norm + A22 * mc2_norm
+                         + 2.0f * (A01 * bg_mc1 + A02 * bg_mc2 + A12 * mc1_mc2);
+            mc_V_pat[pi].L = A03 * p_bg.L + A13 * p_mc1.L + A23 * p_mc2.L;
+            mc_V_pat[pi].a = A03 * p_bg.a + A13 * p_mc1.a + A23 * p_mc2.a;
+            mc_V_pat[pi].b = A03 * p_bg.b + A13 * p_mc1.b + A23 * p_mc2.b;
+            mc_Q_pat[pi] = A33;
+        }
+        mc_cp_const.assign(num_cells * 256, 0.0f);
+        mc_cp_lin.assign(num_cells * 256, OKLab{0, 0, 0});
+        std::atomic<std::size_t> next{0};
+        auto build = [&] {
+            while (true) {
+                auto ci = next.fetch_add(1, std::memory_order_relaxed);
+                if (ci >= num_cells) break;
+                if (cell_is_hires[ci]) continue;
+                auto& bb = mc_b_double_blurred[ci];
+                for (std::size_t pi = 0; pi < 256; ++pi) {
+                    if (pattern_is_hires[pi]) continue;
+                    OKLab DM[4] = {{0,0,0},{0,0,0},{0,0,0},{0,0,0}};
+                    for (std::uint8_t k = 0; k < 4; ++k) {
+                        for (std::uint8_t i = 0; i < pat_class_count[pi][k]; ++i) {
+                            auto p = pat_class_pixels[pi][k][i];
+                            DM[k].L += bb[p].L;
+                            DM[k].a += bb[p].a;
+                            DM[k].b += bb[p].b;
+                        }
+                    }
+                    float R_cp = -2.0f * (DM[0].L * p_bg.L + DM[0].a * p_bg.a
+                                                  + DM[0].b * p_bg.b
+                                       + DM[1].L * p_mc1.L + DM[1].a * p_mc1.a
+                                                  + DM[1].b * p_mc1.b
+                                       + DM[2].L * p_mc2.L + DM[2].a * p_mc2.a
+                                                  + DM[2].b * p_mc2.b)
+                              + mc_sum_DD[ci];
+                    mc_cp_const[ci * 256 + pi] = mc_W_pat[pi] + R_cp;
+                    mc_cp_lin[ci * 256 + pi].L = 2.0f * mc_V_pat[pi].L - 2.0f * DM[3].L;
+                    mc_cp_lin[ci * 256 + pi].a = 2.0f * mc_V_pat[pi].a - 2.0f * DM[3].a;
+                    mc_cp_lin[ci * 256 + pi].b = 2.0f * mc_V_pat[pi].b - 2.0f * DM[3].b;
+                }
+            }
+        };
+        auto nt = std::min(static_cast<std::size_t>(hw_threads()), num_cells);
+        std::vector<std::jthread> threads;
+        threads.reserve(nt - 1);
+        for (std::size_t t = 1; t < nt; ++t) threads.emplace_back(build);
+        build();
+        mc_blur_precompute_valid = true;
+    };
+
+    auto cell_err_mc_blur_fast = [&](std::size_t ci, std::size_t pat_idx,
+                                       std::uint8_t pc) {
+        auto& p_pc = pal_lab[pc];
+        float pc_norm = p_pc.L*p_pc.L + p_pc.a*p_pc.a + p_pc.b*p_pc.b;
+        auto k = ci * 256 + pat_idx;
+        auto& lin = mc_cp_lin[k];
+        return mc_cp_const[k] + mc_Q_pat[pat_idx] * pc_norm
+             + p_pc.L * lin.L + p_pc.a * lin.a + p_pc.b * lin.b;
+    };
+
+    auto cell_err_metric = [&](std::size_t ci, const Pattern& pat,
+                                std::uint8_t pc) -> float {
+        if (metric == quantize::Metric::mse) {
+            return cell_pattern_error(cells_lab[ci], pat, pal_lab,
+                                       !cell_is_hires[ci],
+                                       bg, mc1, mc2, pc);
+        }
+        if (metric == quantize::Metric::blur && cell_is_hires[ci]) {
+            std::uint64_t B = 0;
+            for (std::size_t row = 0; row < 8; ++row) {
+                auto byte = pat[row];
+                for (std::size_t col = 0; col < 8; ++col)
+                    if ((byte >> (7 - col)) & 1)
+                        B |= std::uint64_t{1} << (row * 8 + col);
+            }
+            return bu::score_cell_blur_2color_bitmap(
+                B, blurred_src[ci], kernel_taps_hi, pal_lab,
+                closed_ctx[ci], bg, pc);
+        }
+        std::size_t n_pix = cells_lab[ci].size();
+        std::array<OKLab, 64> rendered{};
+        render_cell(ci, pat, pc, rendered);
+        if (metric == quantize::Metric::blur) {
+            // MC cell: 4-colour pattern, no closed-form.
+            float err = 0;
+            auto& bsrc = blurred_src[ci];
+            auto& taps = kernel_taps_mc;
+            for (std::size_t p = 0; p < n_pix; ++p) {
+                OKLab br{0, 0, 0};
+                for (auto& tap : taps[p]) {
+                    auto& v = rendered[tap.q];
+                    br.L += tap.w * v.L;
+                    br.a += tap.w * v.a;
+                    br.b += tap.w * v.b;
+                }
+                float dL = bsrc[p].L - br.L;
+                float da = bsrc[p].a - br.a;
+                float db = bsrc[p].b - br.b;
+                err += dL * dL + da * da + db * db;
+            }
+            return err;
+        }
+        // ssim hybrid
+        constexpr float C1 = 0.01f * 0.01f;
+        constexpr float C2 = 0.03f * 0.03f;
+        constexpr float kMseLambda = 1.0f;
+        float inv_n = 1.0f / static_cast<float>(n_pix);
+        auto& sp = ssim_pre[ci];
+        OKLab mu_r{0, 0, 0};
+        float mse = 0;
+        for (std::size_t p = 0; p < n_pix; ++p) {
+            mu_r.L += rendered[p].L;
+            mu_r.a += rendered[p].a;
+            mu_r.b += rendered[p].b;
+            float dL = cells_lab[ci][p].L - rendered[p].L;
+            float da = cells_lab[ci][p].a - rendered[p].a;
+            float db = cells_lab[ci][p].b - rendered[p].b;
+            mse += dL * dL + da * da + db * db;
+        }
+        mu_r.L *= inv_n; mu_r.a *= inv_n; mu_r.b *= inv_n;
+        OKLab var_r{0, 0, 0}, cov{0, 0, 0};
+        for (std::size_t p = 0; p < n_pix; ++p) {
+            float drL = rendered[p].L - mu_r.L;
+            float dra = rendered[p].a - mu_r.a;
+            float drb = rendered[p].b - mu_r.b;
+            var_r.L += drL * drL;
+            var_r.a += dra * dra;
+            var_r.b += drb * drb;
+            cov.L += drL * (cells_lab[ci][p].L - sp.mu_s.L);
+            cov.a += dra * (cells_lab[ci][p].a - sp.mu_s.a);
+            cov.b += drb * (cells_lab[ci][p].b - sp.mu_s.b);
+        }
+        var_r.L *= inv_n; var_r.a *= inv_n; var_r.b *= inv_n;
+        cov.L *= inv_n; cov.a *= inv_n; cov.b *= inv_n;
+        auto ssim_ch = [&](float ms, float vs, float cv,
+                            float mr, float vr) {
+            float num = (2.0f * ms * mr + C1) * (2.0f * cv + C2);
+            float den = (ms * ms + mr * mr + C1) * (vs + vr + C2);
+            return num / den;
+        };
+        float ssim = ssim_ch(sp.mu_s.L, sp.var_s.L, cov.L, mu_r.L, var_r.L)
+                   + ssim_ch(sp.mu_s.a, sp.var_s.a, cov.a, mu_r.a, var_r.a)
+                   + ssim_ch(sp.mu_s.b, sp.var_s.b, cov.b, mu_r.b, var_r.b);
+        return -ssim + kMseLambda * mse;
+    };
+
     for (int iter = 0; iter < max_iters; ++iter) {
         std::size_t changes = 0;
+
+        // (Re)build MC-blur precompute when patterns may have changed.
+        bool use_mc_blur_fast = (metric == quantize::Metric::blur);
+        if (use_mc_blur_fast && !mc_blur_precompute_valid)
+            mc_blur_build_precompute();
 
         // Step 1: Reassign each cell to best pattern of matching mode
         std::atomic<std::size_t> next_cell{0};
@@ -1061,17 +2214,23 @@ void refine_charset_mixed(
 
                 bool is_hi = cell_is_hires[ci];
                 auto current_pc = color_ram[ci];
-                float best_err = cell_pattern_error(
-                    cells_lab[ci], patterns[assignments[ci]], pal_lab,
-                    !is_hi, bg, mc1, mc2, current_pc);
+                bool use_fast = use_mc_blur_fast && !is_hi;
+                float best_err;
                 auto best_pat = assignments[ci];
+                if (use_fast) {
+                    best_err = cell_err_mc_blur_fast(
+                        ci, assignments[ci], current_pc);
+                } else {
+                    best_err = cell_err_metric(ci, patterns[assignments[ci]],
+                                                  current_pc);
+                }
 
                 for (std::size_t p = 0; p < 256; ++p) {
                     if (p == assignments[ci]) continue;
                     if (pattern_is_hires[p] != is_hi) continue; // mode must match
-                    float err = cell_pattern_error(
-                        cells_lab[ci], patterns[p], pal_lab,
-                        !is_hi, bg, mc1, mc2, current_pc);
+                    float err = use_fast
+                        ? cell_err_mc_blur_fast(ci, p, current_pc)
+                        : cell_err_metric(ci, patterns[p], current_pc);
                     if (err < best_err) {
                         best_err = err;
                         best_pat = static_cast<std::uint8_t>(p);
@@ -1100,6 +2259,7 @@ void refine_charset_mixed(
             float best_err = std::numeric_limits<float>::max();
             std::uint8_t best_pc = color_ram[ci];
             bool is_hi = cell_is_hires[ci];
+            bool use_fast = use_mc_blur_fast && !is_hi;
 
             // Both hires and MC limited to 0-7 in MC text mode
             // (hires: bit 3 = MC enable flag; MC: only 3 bits available)
@@ -1108,9 +2268,9 @@ void refine_charset_mixed(
                 if (is_hi && pc == bg) continue;
                 if (!is_hi && (pc == bg || pc == mc1 || pc == mc2)) continue;
 
-                float err = cell_pattern_error(
-                    cells_lab[ci], patterns[assignments[ci]], pal_lab,
-                    !is_hi, bg, mc1, mc2, pc);
+                float err = use_fast
+                    ? cell_err_mc_blur_fast(ci, assignments[ci], pc)
+                    : cell_err_metric(ci, patterns[assignments[ci]], pc);
                 if (err < best_err) { best_err = err; best_pc = pc; }
             }
 
@@ -1122,6 +2282,7 @@ void refine_charset_mixed(
 
         // Step 3: Recompute centroids (when enabled)
         if (recompute_centroids) {
+            mc_blur_precompute_valid = false;
             std::array<std::vector<std::size_t>, 256> pat_cells;
             for (std::size_t ci = 0; ci < num_cells; ++ci)
                 pat_cells[assignments[ci]].push_back(ci);
@@ -1204,7 +2365,8 @@ void refine_charset_mixed(
 
 Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
                               CharsetMode mode,
-                              const dither::Settings& dither_settings) {
+                              const dither::Settings& dither_settings,
+                              quantize::Metric metric) {
     bool multicolor = (mode == CharsetMode::multicolor);
     bool mixed = (mode == CharsetMode::mixed);
     // Mixed mode uses full 8-pixel-wide cells (like hires)
@@ -1249,21 +2411,24 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
     std::vector<bool> cell_is_hires;
 
     if (mixed) {
-        auto sel = select_colors_mixed(image, palette, cols, rows);
+        auto sel = select_colors_mixed(image, palette, cols, rows, metric);
         screen = std::move(sel.screen);
         bg = sel.bg; mc1 = sel.mc1; mc2 = sel.mc2;
         cell_is_hires = std::move(sel.cell_is_hires);
     } else if (multicolor) {
-        auto sel = select_colors_multicolor(image, palette, cols, rows);
+        auto sel = select_colors_multicolor(image, palette, cols, rows, metric);
         screen = std::move(sel.screen);
         bg = sel.bg; mc1 = sel.mc1; mc2 = sel.mc2;
     } else {
-        screen = select_colors_hires(image, palette, cols, rows);
+        screen = select_colors_hires(image, palette, cols, rows, metric);
         bg = screen.background_color;
     }
 
-    // Phase 2: Apply dithering
-    if (dither_settings.method != dither::Method::none) {
+    // Phase 2: Apply dithering. Skipped when a perceptual metric is in
+    // use — those score against the continuous source and don't want
+    // an extra error-diffusion pass on top.
+    if (dither_settings.method != dither::Method::none &&
+        metric == quantize::Metric::mse) {
         log_println("  Dithering...");
         if (mixed) {
             // Mixed mode: dither hires and MC cells in separate passes
@@ -1429,11 +2594,11 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
         refine_charset_mixed(image, palette, bg, mc1, mc2,
                              cols, rows, flat_patterns, flat_pattern_is_hires,
                              flat_assignments, flat_color_ram, cell_is_hires,
-                             10, !has_dither);
+                             10, !has_dither, metric);
     } else {
         refine_charset(image, palette, multicolor, bg, mc1, mc2,
                        cols, rows, flat_patterns, flat_assignments,
-                       flat_color_ram, 10, !has_dither);
+                       flat_color_ram, 10, !has_dither, metric);
     }
 
     // Recount unique patterns after refinement

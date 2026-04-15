@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dither.hpp"
+#include "quantize.hpp"
 #include "types.hpp"
 
 #include <array>
@@ -35,9 +36,13 @@ struct CharsetResult {
 // Convert an image to a 256-character charset.
 // Works with any image size that's a multiple of cell dimensions.
 // Deduplicates identical patterns, merges closest pairs if > 256 unique.
+//
+// `metric` selects the per-cell color-selection error metric. Only
+// charset-mc currently honors anything other than `mse`.
 Result<CharsetResult> convert(const Image& image, const Palette& palette,
                               CharsetMode mode,
-                              const dither::Settings& dither_settings);
+                              const dither::Settings& dither_settings,
+                              quantize::Metric metric = quantize::Metric::mse);
 
 Result<void> write_header(std::string_view path,
                           const CharsetResult& result,

@@ -131,6 +131,12 @@ Result<Image> load_and_preprocess(const std::uint8_t* input_data,
     return image;
 }
 
+quantize::Metric parse_metric(const Options& options) {
+    if (options.metric == "blur") return quantize::Metric::blur;
+    if (options.metric == "ssim") return quantize::Metric::ssim;
+    return quantize::Metric::mse;
+}
+
 dither::Settings make_dither_settings(const Options& options) {
     dither::Settings ds;
     ds.method = parse_dither(options.dither);
@@ -170,7 +176,8 @@ Result<Image> run_charset_pipeline(const std::uint8_t* input_data,
     if (pal.colors.empty()) pal = palette::by_name("colodore");
 
     auto ds = make_dither_settings(options);
-    auto result = charset::convert(*image, pal, cmode, ds);
+    auto metric = parse_metric(options);
+    auto result = charset::convert(*image, pal, cmode, ds, metric);
     if (!result) return std::unexpected{result.error()};
 
     return charset::render(*result, pal);
@@ -208,10 +215,19 @@ Result<PipelineResult> run_pipeline(const std::uint8_t* input_data,
         };
     }
 
-    auto screen = quantize::quantize(*image, pal, mode, params, tfn, ds.strength);
+    auto metric =
+        options.metric == "blur" ? quantize::Metric::blur :
+        options.metric == "ssim" ? quantize::Metric::ssim :
+                                   quantize::Metric::mse;
+
+    auto screen = quantize::quantize(*image, pal, mode, params, tfn, ds.strength, metric,
+                                     options.graphics_only);
     if (!screen) return std::unexpected{screen.error()};
 
-    if (ds.method != dither::Method::none)
+    // Post-quantize dithering only makes sense with the MSE metric — blur
+    // and ssim already encode against the continuous source and would be
+    // disturbed by an extra error-diffusion pass on top.
+    if (ds.method != dither::Method::none && metric == quantize::Metric::mse)
         dither::apply(*image, *screen, pal, params, ds);
 
     // Render
@@ -340,7 +356,8 @@ ConvertResult convert_prg(const std::uint8_t* input_data,
         if (pal.colors.empty()) pal = palette::by_name("colodore");
 
         auto ds = make_dither_settings(options);
-        auto result = charset::convert(*image, pal, cmode, ds);
+        auto metric = parse_metric(options);
+    auto result = charset::convert(*image, pal, cmode, ds, metric);
         if (!result) return {{}, 0, 0, result.error().message};
 
         auto prg_data = prg::charset_text(*result);
@@ -519,7 +536,8 @@ ConvertResult convert_header(const std::uint8_t* input_data,
         if (pal.colors.empty()) pal = palette::by_name("colodore");
 
         auto ds = make_dither_settings(options);
-        auto result = charset::convert(*image, pal, cmode, ds);
+        auto metric = parse_metric(options);
+    auto result = charset::convert(*image, pal, cmode, ds, metric);
         if (!result) return {{}, 0, 0, result.error().message};
 
         auto header_text = charset::generate_header(*result, name);

@@ -1,8 +1,8 @@
 <script setup>
-import { ref, reactive, watch, nextTick } from 'vue'
+import { ref, reactive, watch, nextTick, computed } from 'vue'
 import { useWasm } from '../composables/useWasm.js'
 import { useImageUpload } from '../composables/useImageUpload.js'
-import { MODES, PALETTES, DITHER_METHODS, SLIDERS, DIFFUSION_SLIDERS, EXAMPLES, defaultOptions, isSpriteMode, isCharsetMode, spriteGridDimensions, hasPrgExport, isErrorDiffusion } from '../lib/options.js'
+import { MODES, PALETTES, DITHER_METHODS, SLIDERS, DIFFUSION_SLIDERS, PETSCII_METRICS, EXAMPLES, defaultOptions, isSpriteMode, isCharsetMode, spriteGridDimensions, hasPrgExport, isErrorDiffusion } from '../lib/options.js'
 import { track } from '../lib/analytics.js'
 
 import InputNumber from 'primevue/inputnumber'
@@ -54,10 +54,33 @@ let uploadTime = 0
 const ditherOptions = DITHER_METHODS.flatMap(g =>
   g.items.map(d => ({ value: d.value, label: d.label, group: g.group }))
 )
-const groupedDitherOptions = DITHER_METHODS.map(g => ({
+const allGroupedDitherOptions = DITHER_METHODS.map(g => ({
   label: g.group,
   items: g.items.map(d => ({ value: d.value, label: d.label }))
 }))
+// When the perceptual metric (blur / ssim) is active, error-diffusion
+// dither is a no-op (the post-quantize pass is skipped), so hide those
+// groups from the selector entirely. Ordered dither still applies as
+// a threshold bias on the cell's OKLab source.
+const groupedDitherOptions = computed(() => {
+  if (options.metric === 'mse') return allGroupedDitherOptions
+  return allGroupedDitherOptions
+    .map(g => ({ ...g, items: g.items.filter(d => !isErrorDiffusion(d.value)) }))
+    .filter(g => g.items.length > 0)
+})
+
+// Flat list of currently-visible dither values, used by the up/down
+// chevron buttons next to the dither selector.
+const allDitherValues = computed(() =>
+  groupedDitherOptions.value.flatMap(g => g.items.map(d => d.value))
+)
+function cycleDither(dir) {
+  const vals = allDitherValues.value
+  if (vals.length === 0) return
+  const idx = vals.indexOf(options.dither)
+  const next = (idx + dir + vals.length) % vals.length
+  options.dither = vals[next]
+}
 
 function buildWasmOptions() {
   const opts = { ...options }
@@ -72,21 +95,22 @@ function buildWasmOptions() {
 }
 
 let debounceTimer = null
+let spinnerTimer = null
 
 function doConvert() {
   if (!imageBytes.value || wasmLoading.value) return
 
   clearTimeout(debounceTimer)
   debounceTimer = setTimeout(async () => {
-    converting.value = true
     errorMsg.value = ''
-
-    await nextTick()
-    await new Promise(r => setTimeout(r, 10))
+    // Only show the busy spinner if conversion takes longer than 100ms,
+    // so quick re-renders don't flicker.
+    clearTimeout(spinnerTimer)
+    spinnerTimer = setTimeout(() => { converting.value = true }, 100)
 
     const t0 = performance.now()
     try {
-      const result = convertRGBA(imageBytes.value, buildWasmOptions())
+      const result = await convertRGBA(imageBytes.value, buildWasmOptions())
 
       if (result.error) {
         errorMsg.value = result.error
@@ -146,6 +170,7 @@ function doConvert() {
       track('error', { type: 'convert-exception', message: e.message })
     }
 
+    clearTimeout(spinnerTimer)
     converting.value = false
   }, 150)
 }
@@ -170,6 +195,32 @@ for (const key of ['gamma', 'ditherStrength', 'brightness', 'contrast', 'saturat
 watch(() => options.serpentine, (val) => { track('setting-tweak', { key: 'serpentine', value: val }) })
 watch(() => options.matchRange, (val) => { track('setting-tweak', { key: 'matchRange', value: val }) })
 
+// Default dither to none for the three modes where the post-quantize
+// dither pass interferes with the per-cell encoder's careful pattern
+// choice (PETSCII, charset-hi, charset-mc). User can still re-enable
+// dither manually if they want it. Fires on mount and on mode/metric
+// change. Also handles the perceptual-metric case for petscii and
+// charset-mc — blur and ssim score against the continuous source.
+function syncDitherForMode() {
+  const charsetLike = options.mode === 'petscii'
+                   || options.mode === 'charset-hi'
+                   || options.mode === 'charset-mc'
+                   || options.mode === 'charset-mixed'
+  if (charsetLike && options.dither !== 'none') {
+    options.dither = 'none'
+    return
+  }
+  // Bitmap modes with a perceptual metric: error-diffusion doesn't
+  // apply (see post-quantize skip in api.cpp), so fall back to a
+  // sensible default ordered method if the current selection is
+  // error-diff.
+  if (options.metric !== 'mse' && isErrorDiffusion(options.dither)) {
+    options.dither = 'checker'
+  }
+}
+watch(() => options.mode, syncDitherForMode, { immediate: true })
+watch(() => options.metric, syncDitherForMode)
+
 // Session duration on page unload
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
@@ -185,11 +236,11 @@ function trackExport(format) {
   track('export', data)
 }
 
-function downloadPNG() {
+async function downloadPNG() {
   if (!imageBytes.value) return
   trackExport('png')
   try {
-    const result = convertPNG(imageBytes.value, buildWasmOptions())
+    const result = await convertPNG(imageBytes.value, buildWasmOptions())
     if (result.error) {
       errorMsg.value = result.error
       return
@@ -206,11 +257,11 @@ function downloadPNG() {
   }
 }
 
-function downloadPRG() {
+async function downloadPRG() {
   if (!imageBytes.value) return
   trackExport('prg')
   try {
-    const result = convertPRG(imageBytes.value, buildWasmOptions())
+    const result = await convertPRG(imageBytes.value, buildWasmOptions())
     if (result.error) {
       errorMsg.value = result.error
       return
@@ -227,12 +278,12 @@ function downloadPRG() {
   }
 }
 
-function downloadHeader() {
+async function downloadHeader() {
   if (!imageBytes.value) return
   trackExport('header')
   try {
     const stem = (imageName.value || 'image').replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9]/g, '_')
-    const result = convertHeader(imageBytes.value, buildWasmOptions(), stem)
+    const result = await convertHeader(imageBytes.value, buildWasmOptions(), stem)
     if (result.error) {
       errorMsg.value = result.error
       return
@@ -249,11 +300,11 @@ function downloadHeader() {
   }
 }
 
-function downloadRaw(format) {
+async function downloadRaw(format) {
   if (!imageBytes.value) return
   trackExport(format)
   try {
-    const result = convertRaw(imageBytes.value, buildWasmOptions(), format)
+    const result = await convertRaw(imageBytes.value, buildWasmOptions(), format)
     if (result.error) {
       errorMsg.value = result.error
       return
@@ -408,9 +459,58 @@ function onFileSelect(event) {
                 </div>
               </div>
 
-              <div class="grid align-items-center">
-                <label class="col-4 text-xs text-color-secondary font-semibold" title="Dithering algorithm. Ordered methods use fixed patterns; error diffusion propagates quantization error to neighbors.">Dither</label>
+              <!-- Per-cell error metric. PETSCII, all charset modes, and
+                   the bitmap modes (hires / multicolor) all support blur /
+                   ssim; those scoring metrics use the continuous source
+                   and disable the dither below. -->
+              <div v-if="options.mode === 'petscii' ||
+                          options.mode === 'charset-hi' ||
+                          options.mode === 'charset-mc' ||
+                          options.mode === 'charset-mixed' ||
+                          options.mode === 'hires' ||
+                          options.mode === 'multicolor'"
+                class="grid align-items-center">
+                <label class="col-4 text-xs text-color-secondary font-semibold"
+                  title="Per-cell error metric for the brute-force search. Pappas-Neuhoff (perceptual blur) and SSIM need the continuous source and hide the dither selector. MSE pairs with pixel-level dither below.">
+                  Metric
+                </label>
                 <div class="col-8">
+                  <Select v-model="options.metric" :options="PETSCII_METRICS"
+                    optionValue="value" optionLabel="label" class="w-full" />
+                </div>
+              </div>
+
+              <!-- PETSCII-only: restrict candidate glyphs to graphic
+                   characters (skip alphabet/digits/punctuation). Helps
+                   halftone output avoid letter-shaped artefacts in
+                   smooth regions. -->
+              <div v-if="options.mode === 'petscii'"
+                class="grid align-items-center">
+                <label class="col-4 text-xs text-color-secondary font-semibold"
+                  title="Restrict glyph selection to graphic characters only — skip letters, digits and punctuation. About 130 candidate characters.">
+                  Graphics only
+                </label>
+                <div class="col-8">
+                  <ToggleSwitch v-model="options.graphicsOnly" />
+                </div>
+              </div>
+
+              <!-- Dither row: hidden for character modes when a
+                   perceptual metric is selected (those modes force
+                   dither=none anyway). Always visible for bitmap modes
+                   (hires/multicolor) even with blur/ssim — the ordered
+                   dither threshold still biases the cell's OKLab source
+                   before per-pixel-nearest rendering, giving texture
+                   control. Error-diffusion dither with blur/ssim is a
+                   no-op (the post-quantize pass is skipped). -->
+              <div v-if="!((options.mode === 'petscii' ||
+                            options.mode === 'charset-hi' ||
+                            options.mode === 'charset-mc' ||
+                            options.mode === 'charset-mixed')
+                          && options.metric !== 'mse')"
+                class="grid align-items-center">
+                <label class="col-4 text-xs text-color-secondary font-semibold" title="Dithering algorithm. Ordered methods use fixed patterns; error diffusion propagates quantization error to neighbors.">Dither</label>
+                <div class="col-8 flex align-items-stretch gap-1">
                   <Select
                     v-model="options.dither"
                     :options="groupedDitherOptions"
@@ -418,8 +518,19 @@ function onFileSelect(event) {
                     optionLabel="label"
                     optionGroupLabel="label"
                     optionGroupChildren="items"
-                    class="w-full"
+                    class="flex-1"
+                    style="min-width:0"
                   />
+                  <div class="flex flex-column" style="gap:1px">
+                    <Button icon="pi pi-chevron-up" severity="secondary" text size="small"
+                      @click="cycleDither(-1)"
+                      title="Previous dither method"
+                      style="min-width:0;width:1.2rem;height:0.85rem;padding:0" />
+                    <Button icon="pi pi-chevron-down" severity="secondary" text size="small"
+                      @click="cycleDither(1)"
+                      title="Next dither method"
+                      style="min-width:0;width:1.2rem;height:0.85rem;padding:0" />
+                  </div>
                 </div>
               </div>
             </div>
@@ -502,22 +613,28 @@ function onFileSelect(event) {
           </div>
         </div>
 
-        <div v-else class="flex flex-column gap-2">
-          <div class="preview-container surface-card border-round-lg overflow-hidden relative">
-            <canvas ref="canvasRef" class="preview-canvas" />
-            <div v-if="converting" class="overlay flex align-items-center justify-content-center">
-              <ProgressSpinner style="width: 2rem; height: 2rem" />
+        <div v-else>
+          <!-- Inline-block wrapper shrinks to the canvas+padding width so
+               the spinner overlay (in preview-container) and the info row
+               below both align with the actual image rather than the wider
+               preview column. -->
+          <div class="preview-wrap" style="display: inline-block">
+            <div class="preview-container surface-card border-round-lg overflow-hidden relative">
+              <canvas ref="canvasRef" class="preview-canvas" />
+              <div v-if="converting" class="overlay flex align-items-center justify-content-center">
+                <ProgressSpinner style="width: 2rem; height: 2rem" />
+              </div>
             </div>
-          </div>
-          <div class="flex justify-content-between align-items-center px-1">
-            <span class="text-xs text-color-secondary">{{ resultInfo }}</span>
-            <div class="flex align-items-center gap-2">
-              <span v-if="errorMsg" class="text-xs text-red-400">{{ errorMsg }}</span>
-              <label class="flex align-items-center gap-1 text-xs text-color-secondary cursor-pointer"
-                title="Simulate CRT display with scanlines, phosphor bloom, color fringing, and vignette. Display-only.">
-                <ToggleSwitch v-model="crtEnabled" />
-                CRT
-              </label>
+            <div class="flex justify-content-between align-items-center px-1 mt-2">
+              <span class="text-xs text-color-secondary">{{ resultInfo }}</span>
+              <div class="flex align-items-center gap-2">
+                <span v-if="errorMsg" class="text-xs text-red-400">{{ errorMsg }}</span>
+                <label class="flex align-items-center gap-1 text-xs text-color-secondary cursor-pointer"
+                  title="Simulate CRT display with scanlines, phosphor bloom, color fringing, and vignette. Display-only.">
+                  <ToggleSwitch v-model="crtEnabled" />
+                  CRT
+                </label>
+              </div>
             </div>
           </div>
         </div>

@@ -15,6 +15,9 @@ export default defineConfig({
     }
   },
   assetsInclude: ['**/*.wasm'],
+  worker: {
+    format: 'es',
+  },
   build: {
     outDir: '../docs',
     emptyOutDir: true,

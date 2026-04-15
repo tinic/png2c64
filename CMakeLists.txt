@@ -44,6 +44,8 @@ if(EMSCRIPTEN)
         -sEXPORT_NAME=createPng2C64
         -sENVIRONMENT=web,worker
         -sNO_FILESYSTEM=1
+        -sASSERTIONS=1
+        -sSTACK_SIZE=2097152
     )
     set_target_properties(png2c64_wasm PROPERTIES
         OUTPUT_NAME png2c64

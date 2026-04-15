@@ -58,7 +58,7 @@ enum class Method : unsigned char {
 
 struct Settings {
     Method method = Method::checker;
-    float strength = 0.7f;    // 0.0 = no dithering, 1.0 = full
+    float strength = 1.0f;    // 0.0 = no dithering, 1.0 = full
     float error_clamp = 0.1f; // max error magnitude per channel (linear)
     bool serpentine = true;    // alternate scan direction per row
     float adaptive = 0.0f;    // 0.0 = off, 1.0 = full contrast-adaptive diffusion

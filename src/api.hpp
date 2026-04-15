@@ -15,7 +15,7 @@ struct Options {
     float brightness = 0.0f;
     float contrast = 1.0f;
     float saturation = 1.0f;
-    float dither_strength = 0.7f;
+    float dither_strength = 1.0f;
     float error_clamp = 0.1f;
     float adaptive = 0.0f;
     float hue_shift = 0.0f;
@@ -26,6 +26,19 @@ struct Options {
     bool match_range = false;
     int width = 0;
     int height = 0;
+
+    // Per-cell error metric for charset modes (PETSCII, charset-hi,
+    // charset-mc) and any other mode that exposes a metric selector:
+    // "mse" (default; pairs with dither), "blur" (Pappas-Neuhoff
+    // perceptual halftoning), or "ssim" (structural similarity).
+    std::string metric = "mse";
+
+    // PETSCII only: restrict the candidate glyph set to graphic
+    // characters only — skip alphabet, digits, punctuation and their
+    // reverse-video forms. Useful for "demo-style" halftone output
+    // where letter-shaped artefacts in smooth regions look out of
+    // place. See petscii::is_graphic_char for the exact subset.
+    bool graphics_only = false;
 };
 
 struct ConvertResult {

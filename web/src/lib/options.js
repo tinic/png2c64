@@ -75,7 +75,7 @@ export const DITHER_METHODS = [
 export const SLIDERS = [
   { key: 'gamma',          label: 'Gamma',       min: 0.1, max: 5.0, step: 0.05, default: 1.5,
     tip: 'Power curve applied before color matching. >1 darkens midtones, <1 brightens them.' },
-  { key: 'ditherStrength', label: 'Strength',    min: 0,   max: 3.0, step: 0.05, default: 0.7,
+  { key: 'ditherStrength', label: 'Strength',    min: 0,   max: 3.0, step: 0.05, default: 1.0,
     tip: 'Dithering intensity. 0 = no dithering effect, 1 = standard, >1 = exaggerated.' },
   { key: 'brightness',     label: 'Brightness',  min: -1,  max: 1.0, step: 0.05, default: 0.0,
     tip: 'Additive lightness shift in perceptual OKLab space.' },
@@ -101,17 +101,29 @@ export const DIFFUSION_SLIDERS = [
     tip: 'Contrast-adaptive error diffusion. Reduces dithering in detailed areas, keeps it in flat areas.' },
 ]
 
+// PETSCII-only per-cell error metric. Shown only when mode === 'petscii'.
+// blur and ssim use the continuous source and skip pixel-level dither.
+export const PETSCII_METRICS = [
+  { value: 'blur', label: 'Pappas-Neuhoff' },
+  { value: 'ssim', label: 'SSIM' },
+  { value: 'mse',  label: 'Per-pixel MSE' },
+]
+export const PETSCII_DEFAULTS = {
+  metric: 'blur',
+  graphicsOnly: false,
+}
+
 export const EXAMPLES = [
-  { name: 'alien', file: 'alien.png', opts: { gamma: 1.0, ditherStrength: 0.7, matchRange: true } },
-  { name: 'dog', file: 'dog.png', opts: { gamma: 3.0, ditherStrength: 0.7 } },
-  { name: 'dragon', file: 'dragon.png', opts: { gamma: 1.0, ditherStrength: 0.7, matchRange: true } },
-  { name: 'face', file: 'face.png', opts: { gamma: 3.0, ditherStrength: 0.7, sharpen: -0.5, saturation: 0.5 } },
-  { name: 'fantasy', file: 'fantasy.png', opts: { gamma: 1.0, ditherStrength: 0.7, matchRange: true } },
-  { name: 'game', file: 'game.png', opts: { gamma: 2.0, ditherStrength: 0.7 } },
-  { name: 'golden3', file: 'golden3.jpeg', opts: { gamma: 2.0, ditherStrength: 0.7, matchRange: true } },
-  { name: 'head', file: 'head.png', opts: { mode: 'petscii', gamma: 3.3, ditherStrength: 0.7, blackPoint: 0.09, whitePoint: 0.06 } },
-  { name: 'monster', file: 'monster.jpeg', opts: { gamma: 3.0, ditherStrength: 0.7 } },
-  { name: 'ship', file: 'ship.jpeg', opts: { gamma: 2.0, ditherStrength: 0.7, matchRange: true } },
+  { name: 'alien', file: 'alien.png', opts: { gamma: 1.0, ditherStrength: 1.0, matchRange: true } },
+  { name: 'dog', file: 'dog.png', opts: { gamma: 3.0, ditherStrength: 1.0 } },
+  { name: 'dragon', file: 'dragon.png', opts: { gamma: 1.0, ditherStrength: 1.0, matchRange: true } },
+  { name: 'face', file: 'face.png', opts: { gamma: 3.0, ditherStrength: 1.0, sharpen: -0.5, saturation: 0.5 } },
+  { name: 'fantasy', file: 'fantasy.png', opts: { gamma: 1.0, ditherStrength: 1.0, matchRange: true } },
+  { name: 'game', file: 'game.png', opts: { gamma: 2.0, ditherStrength: 1.0 } },
+  { name: 'golden3', file: 'golden3.jpeg', opts: { gamma: 2.0, ditherStrength: 1.0, matchRange: true } },
+  { name: 'head', file: 'head.png', opts: { mode: 'petscii', gamma: 3.3, ditherStrength: 1.0, blackPoint: 0.09, whitePoint: 0.06 } },
+  { name: 'monster', file: 'monster.jpeg', opts: { gamma: 3.0, ditherStrength: 1.0 } },
+  { name: 'ship', file: 'ship.jpeg', opts: { gamma: 2.0, ditherStrength: 1.0, matchRange: true } },
 ]
 
 export function defaultOptions() {
@@ -127,6 +139,7 @@ export function defaultOptions() {
     spritesY: 1,
   }
   for (const s of [...SLIDERS, ...DIFFUSION_SLIDERS]) opts[s.key] = s.default
+  Object.assign(opts, PETSCII_DEFAULTS)
   return opts
 }
 

@@ -58,6 +58,8 @@ struct Config {
     bool charset_mixed = false;
     bool interactive = false;
     bool match_range = false;
+    quantize::Metric metric = quantize::Metric::mse;
+    bool graphics_only = false;
 
     charset::CharsetMode get_charset_mode() const {
         if (charset_mixed) return charset::CharsetMode::mixed;
@@ -102,7 +104,13 @@ void print_usage() {
         "  --gallery <param>               Preview parameter variations in terminal\n"
         "     dither, brightness, contrast, saturation, gamma,\n"
         "     error-clamp, dither-strength, adaptive\n"
-        "  --interactive                    Interactive mode (live parameter tuning)");
+        "  --interactive                    Interactive mode (live parameter tuning)\n"
+        "  --metric mse|blur|ssim          Per-cell error metric (PETSCII / charset-mc).\n"
+        "                                    mse  = per-pixel OKLab MSE (default;\n"
+        "                                           pairs with --dither <method>).\n"
+        "                                    blur = Pappas-Neuhoff perceptual blur.\n"
+        "                                    ssim = Wang structural similarity.\n"
+        );
 }
 
 Result<Config> parse_args(int argc, char* argv[]) {
@@ -131,6 +139,19 @@ Result<Config> parse_args(int argc, char* argv[]) {
         }
         if (arg == "--interactive") {
             config.interactive = true;
+            continue;
+        }
+        if (arg == "--graphics-only") {
+            config.graphics_only = true;
+            continue;
+        }
+        if (arg == "--metric" && i + 1 < argc) {
+            auto val = std::string_view(argv[++i]);
+            if (val == "mse")  config.metric = quantize::Metric::mse;
+            else if (val == "blur") config.metric = quantize::Metric::blur;
+            else if (val == "ssim") config.metric = quantize::Metric::ssim;
+            else return std::unexpected{Error{ErrorCode::invalid_dimensions,
+                "Unknown metric: " + std::string(val)}};
             continue;
         }
 
@@ -1037,7 +1058,8 @@ int main(int argc, char* argv[]) {
                         : config->charset_mc ? "multicolor" : "hires";
         std::println("Converting to {} charset...", mode_label);
         auto result = charset::convert(*image, pal, cmode,
-                                       config->dither_settings);
+                                       config->dither_settings,
+                                       config->metric);
         if (!result) {
             std::println(stderr, "Error: {}", result.error().message);
             return 1;
@@ -1175,7 +1197,8 @@ int main(int argc, char* argv[]) {
     std::println("Quantizing ({})...", mode_name);
     auto tfn = make_threshold_fn(config->dither_settings);
     auto screen = quantize::quantize(*image, pal, config->mode, params,
-                                     tfn, config->dither_settings.strength);
+                                     tfn, config->dither_settings.strength,
+                                     config->metric, config->graphics_only);
     if (!screen) {
         std::println(stderr, "Error: {}", screen.error().message);
         return 1;
@@ -1194,8 +1217,12 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // Dither
-    if (config->dither_settings.method != dither::Method::none) {
+    // Post-quantize dither only composes with the MSE metric — blur
+    // and ssim score against the continuous source (with ordered-dither
+    // threshold bias already applied inside quantize), and an extra
+    // error-diffusion pass on top would fight that selection.
+    if (config->dither_settings.method != dither::Method::none &&
+        config->metric == quantize::Metric::mse) {
         std::println("Dithering...");
         dither::apply(*image, *screen, pal, params, config->dither_settings);
     }
