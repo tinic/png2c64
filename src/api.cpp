@@ -49,6 +49,7 @@ dither::Method parse_dither(const std::string& s) {
     if (s == "atkinson") return dither::Method::atkinson;
     if (s == "sierra") return dither::Method::sierra_lite;
     if (s == "fs-wide") return dither::Method::fs_wide;
+    if (s == "fs-tall") return dither::Method::fs_tall;
     if (s == "jarvis") return dither::Method::jarvis;
     if (s == "line-fs") return dither::Method::line_fs;
     if (s == "halftone8") return dither::Method::halftone8x8;

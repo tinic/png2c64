@@ -209,6 +209,7 @@ Result<Config> parse_args(int argc, char* argv[]) {
                 else if (val == "atkinson") config.dither_settings.method = dither::Method::atkinson;
                 else if (val == "sierra") config.dither_settings.method = dither::Method::sierra_lite;
                 else if (val == "fs-wide") config.dither_settings.method = dither::Method::fs_wide;
+                else if (val == "fs-tall") config.dither_settings.method = dither::Method::fs_tall;
                 else if (val == "jarvis") config.dither_settings.method = dither::Method::jarvis;
                 else if (val == "line2") config.dither_settings.method = dither::Method::line2;
                 else if (val == "line-checker") config.dither_settings.method = dither::Method::line_checker;
@@ -456,6 +457,7 @@ constexpr std::array dither_gallery = {
     DitherGalleryEntry{dither::Method::atkinson,        "atkinson (75% error)"},
     DitherGalleryEntry{dither::Method::sierra_lite,     "sierra (Sierra Lite)"},
     DitherGalleryEntry{dither::Method::fs_wide,         "fs-wide (2:1 Floyd-Steinberg)"},
+    DitherGalleryEntry{dither::Method::fs_tall,         "fs-tall (2:1 vertical-biased)"},
     DitherGalleryEntry{dither::Method::jarvis,          "jarvis (2:1 Jarvis-Judice-Ninke)"},
     DitherGalleryEntry{dither::Method::line2,           "line2 (horizontal 2-level)"},
     DitherGalleryEntry{dither::Method::line_checker,   "line-checker (line-biased checker)"},
@@ -751,23 +753,23 @@ struct RawTerminal {
 #endif // _WIN32
 
 // Short dither names for display
-constexpr std::array<std::string_view, 30> dither_names = {
+constexpr std::array<std::string_view, 31> dither_names = {
     "none", "bayer4", "bayer8", "checker", "bayer2x2", "h2x4",
     "clustered", "line2", "line-check", "line4", "line8",
-    "fs", "atkinson", "sierra", "fs-wide", "jarvis", "line-fs",
+    "fs", "atkinson", "sierra", "fs-wide", "fs-tall", "jarvis", "line-fs",
     "halftone8", "diagonal8", "spiral5", "hex8", "hex5", "blue-noise",
     "ign", "r2", "white-noise", "crosshatch", "radial", "value-noise",
     "ostromoukhov",
 };
 
-constexpr std::array<dither::Method, 30> dither_methods = {
+constexpr std::array<dither::Method, 31> dither_methods = {
     dither::Method::none, dither::Method::bayer4x4, dither::Method::bayer8x8,
     dither::Method::checker, dither::Method::bayer2x2, dither::Method::h2x4,
     dither::Method::clustered_dot, dither::Method::line2,
     dither::Method::line_checker, dither::Method::line4, dither::Method::line8,
     dither::Method::floyd_steinberg, dither::Method::atkinson,
     dither::Method::sierra_lite, dither::Method::fs_wide,
-    dither::Method::jarvis, dither::Method::line_fs,
+    dither::Method::fs_tall, dither::Method::jarvis, dither::Method::line_fs,
     dither::Method::halftone8x8, dither::Method::diagonal8x8,
     dither::Method::spiral5x5, dither::Method::hex8x8,
     dither::Method::hex5x5, dither::Method::blue_noise,

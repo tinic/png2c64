@@ -31,6 +31,10 @@ enum class Method : unsigned char {
 
     // Error diffusion -- 2:1 pixel-ratio aware
     fs_wide,          // Floyd-Steinberg with weights adjusted for 2:1
+    fs_tall,          // Strongly vertical FS: minimal horizontal spread,
+                      //   extends to y+2. Matches multicolor's 2:1 display
+                      //   where horizontal neighbours are twice as far in
+                      //   screen space as vertical ones.
     jarvis,           // Jarvis-Judice-Ninke (wider kernel, handles 2:1 naturally)
 
     // Error diffusion -- horizontal line biased
