@@ -7,6 +7,7 @@
 #include "quantize.hpp"
 #include "scale.hpp"
 #include "types.hpp"
+#include "version.hpp"
 #include "vic2.hpp"
 
 #include <array>
@@ -70,8 +71,14 @@ struct Config {
     }
 };
 
+void print_version() {
+    std::println("png2c64 {}", png2c64::version);
+}
+
 void print_usage() {
     std::println(stderr,
+        "png2c64 {}\n"
+        "\n"
         "Usage: png2c64 [options] input.[png|jpg|bmp|tga] [output.png]\n"
         "\n"
         "Options:\n"
@@ -112,7 +119,8 @@ void print_usage() {
         "                                           pairs with --dither <method>).\n"
         "                                    blur = Pappas-Neuhoff perceptual blur.\n"
         "                                    ssim = Wang structural similarity.\n"
-        );
+        "  --version                        Print version and exit\n",
+        png2c64::version);
 }
 
 Result<Config> parse_args(int argc, char* argv[]) {
@@ -124,6 +132,10 @@ Result<Config> parse_args(int argc, char* argv[]) {
 
         if (arg == "--help" || arg == "-h") {
             print_usage();
+            std::exit(0);
+        }
+        if (arg == "--version" || arg == "-v") {
+            print_version();
             std::exit(0);
         }
 
@@ -765,6 +777,8 @@ constexpr std::array<dither::Method, 30> dither_methods = {
     dither::Method::ostromoukhov,
 };
 
+#ifndef _WIN32
+
 std::size_t dither_index(dither::Method m) {
     for (std::size_t i = 0; i < dither_methods.size(); ++i)
         if (dither_methods[i] == m) return i;
@@ -776,8 +790,6 @@ std::size_t palette_index(std::string_view name) {
         if (palette::all_palettes[i].name == name) return i;
     return 0;
 }
-
-#ifndef _WIN32
 
 void run_interactive(const Image& scaled_image, Config& config,
                      vic2::Mode mode, const vic2::ModeParams& params) {
