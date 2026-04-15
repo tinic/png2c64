@@ -93,6 +93,15 @@ else()
     target_link_libraries(png2c64 PRIVATE stb)
     target_compile_options(png2c64 PRIVATE ${PNG2C64_WARNING_FLAGS})
 
+    if(MINGW)
+        # std::print's terminal helpers (__open_terminal, __write_to_terminal)
+        # live in libstdc++exp.a on MinGW rather than the main libstdc++.a.
+        # Must come AFTER object files in the link line, so use
+        # target_link_libraries (not CMAKE_EXE_LINKER_FLAGS, which is
+        # positioned before objects and won't pull from a static archive).
+        target_link_libraries(png2c64 PRIVATE -lstdc++exp)
+    endif()
+
     # -----------------------------------------------------------------------
     # Example conversions (native only)
     # -----------------------------------------------------------------------
