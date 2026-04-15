@@ -82,6 +82,65 @@ inline std::vector<color_space::OKLab> compute_blurred(
     return out;
 }
 
+// Convolve a whole OKLab image with the same 3×3 binomial blur, using
+// replicate padding at the *image* borders (not cell borders). Per-cell
+// slices of this result serve as the blur-metric source target, so
+// adjacent cells see a coherent blurred gradient instead of each cell's
+// own edge-clamped blur. Fixes visible 8×8 cell blocking in smooth
+// gradients under --metric blur.
+inline std::vector<color_space::OKLab> blur_image_replicate(
+    std::span<const color_space::OKLab> in,
+    std::size_t w, std::size_t h) {
+    static constexpr std::array<std::array<float, 3>, 3> kBlur = {{
+        {1.0f / 16, 2.0f / 16, 1.0f / 16},
+        {2.0f / 16, 4.0f / 16, 2.0f / 16},
+        {1.0f / 16, 2.0f / 16, 1.0f / 16},
+    }};
+    std::vector<color_space::OKLab> out(in.size());
+    auto iw = static_cast<int>(w);
+    auto ih = static_cast<int>(h);
+    for (int y = 0; y < ih; ++y) {
+        for (int x = 0; x < iw; ++x) {
+            color_space::OKLab b{0, 0, 0};
+            for (int dy = -1; dy <= 1; ++dy) {
+                int ny = std::clamp(y + dy, 0, ih - 1);
+                for (int dx = -1; dx <= 1; ++dx) {
+                    int nx = std::clamp(x + dx, 0, iw - 1);
+                    auto& v = in[static_cast<std::size_t>(ny) * w +
+                                 static_cast<std::size_t>(nx)];
+                    float kw = kBlur[static_cast<std::size_t>(dy + 1)]
+                                    [static_cast<std::size_t>(dx + 1)];
+                    b.L += kw * v.L;
+                    b.a += kw * v.a;
+                    b.b += kw * v.b;
+                }
+            }
+            out[static_cast<std::size_t>(y) * w +
+                static_cast<std::size_t>(x)] = b;
+        }
+    }
+    return out;
+}
+
+// Copy a cell-sized region out of a flat (w × h) OKLab image.
+inline std::vector<color_space::OKLab> copy_cell_from(
+    std::span<const color_space::OKLab> image,
+    std::size_t w,
+    std::size_t cell_x, std::size_t cell_y,
+    std::size_t cell_w, std::size_t cell_h) {
+    std::vector<color_space::OKLab> out;
+    out.reserve(cell_w * cell_h);
+    auto px = cell_x * cell_w;
+    auto py = cell_y * cell_h;
+    for (std::size_t dy = 0; dy < cell_h; ++dy) {
+        auto row = (py + dy) * w + px;
+        for (std::size_t dx = 0; dx < cell_w; ++dx) {
+            out.push_back(image[row + dx]);
+        }
+    }
+    return out;
+}
+
 // Per-cell pixel → palette-color squared-OKLab-distance LUT. Built once
 // per cell so every scoring call below avoids the 3-sub / 3-mult per
 // (pixel, palette-color) pair.
