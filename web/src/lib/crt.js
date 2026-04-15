@@ -81,7 +81,35 @@ export function applyCRT(ctx, width, height, pixelScale = 4) {
     }
   }
 
-  // 2. Scanlines aligned to source pixel rows.
+  // 2. RGB phosphor mask (aperture-grille style).
+  //
+  // Each source column spans `pixelScale` canvas columns; modulate
+  // R/G/B emission across those columns as three cosines 120° apart
+  // so a white source pixel shows a visible triplet — red-tinted on
+  // the left, green in the middle, blue on the right. Sum of the
+  // three cosines is zero so average brightness is preserved.
+  const maskDepth = 0.22
+  const maskR = new Float32Array(pixelScale)
+  const maskG = new Float32Array(pixelScale)
+  const maskB = new Float32Array(pixelScale)
+  for (let p = 0; p < pixelScale; p++) {
+    const phase = (2 * Math.PI * p) / pixelScale
+    maskR[p] = 1 + maskDepth * Math.cos(phase)
+    maskG[p] = 1 + maskDepth * Math.cos(phase - (2 * Math.PI) / 3)
+    maskB[p] = 1 + maskDepth * Math.cos(phase - (4 * Math.PI) / 3)
+  }
+  for (let y = 0; y < height; y++) {
+    const rowOff = y * width * 4
+    for (let x = 0; x < width; x++) {
+      const p = x % pixelScale
+      const i = rowOff + x * 4
+      px[i]     = clamp255(px[i]     * maskR[p])
+      px[i + 1] = clamp255(px[i + 1] * maskG[p])
+      px[i + 2] = clamp255(px[i + 2] * maskB[p])
+    }
+  }
+
+  // 3. Scanlines aligned to source pixel rows.
   //
   // Each source row maps to `pixelScale` canvas rows. Real CRT beams
   // are bright in the centre of a scanline and fade at the top/bottom
