@@ -17,8 +17,10 @@
 #include <string>
 #include <string_view>
 #include <csignal>
+#ifndef _WIN32
 #include <termios.h>
 #include <unistd.h>
+#endif
 #include <vector>
 
 namespace {
@@ -698,8 +700,10 @@ bool run_gallery(const std::string& gallery_name,
 }
 
 // ---------------------------------------------------------------------------
-// Interactive mode
+// Interactive mode (POSIX only — uses termios for raw-tty input)
 // ---------------------------------------------------------------------------
+
+#ifndef _WIN32
 
 // Global so the signal handler can restore terminal state
 termios g_original_termios{};
@@ -731,6 +735,8 @@ struct RawTerminal {
         restore_terminal(0);
     }
 };
+
+#endif // _WIN32
 
 // Short dither names for display
 constexpr std::array<std::string_view, 30> dither_names = {
@@ -770,6 +776,8 @@ std::size_t palette_index(std::string_view name) {
         if (palette::all_palettes[i].name == name) return i;
     return 0;
 }
+
+#ifndef _WIN32
 
 void run_interactive(const Image& scaled_image, Config& config,
                      vic2::Mode mode, const vic2::ModeParams& params) {
@@ -967,6 +975,17 @@ void run_interactive(const Image& scaled_image, Config& config,
         refresh();
     }
 }
+
+#else // _WIN32
+
+void run_interactive(const Image&, Config&, vic2::Mode,
+                     const vic2::ModeParams&) {
+    std::println(stderr,
+        "--interactive is not supported on Windows "
+        "(requires a POSIX tty).");
+}
+
+#endif // _WIN32
 
 } // namespace
 
