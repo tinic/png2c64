@@ -1258,6 +1258,85 @@ ScreenResult quantize_fli_with_bg(
         result.cells[idx] = std::move(cell);
     });
 
+    // Global-FS palette coherence for FLI: colorram = most-used non-bg
+    // in the cell's region of a full-palette FS output; each row's
+    // 2-colour screen pair = top-2 of the row's pixels (excluding bg
+    // and colorram). Gated on tfn empty (error-diffusion methods).
+    if (!tfn) {
+        auto w = image.width();
+        auto global = global_fs_indices(image, palette_lab);
+        auto cw = params.cell_width;
+        auto ch = params.cell_height;
+        std::atomic<float> refined{0.0f};
+        parallel_for_cells(cx, cy,
+            [&](std::size_t idx, std::size_t cxi, std::size_t cyi) {
+                if (cxi < vic2::fli_bug_columns) {
+                    refined.fetch_add(result.cells[idx].error,
+                                       std::memory_order_relaxed);
+                    return;
+                }
+                auto& cell = result.cells[idx];
+                auto px = cxi * cw;
+                auto py = cyi * ch;
+                std::array<std::uint16_t, 16> cell_hist{};
+                for (std::size_t dy = 0; dy < ch; ++dy)
+                    for (std::size_t dx = 0; dx < cw; ++dx)
+                        ++cell_hist[global[(py + dy) * w + px + dx]];
+                cell_hist[bg] = 0;
+                std::uint8_t cr = bg;
+                std::uint16_t best_cnt = 0;
+                for (std::size_t c = 0; c < 16; ++c)
+                    if (cell_hist[c] > best_cnt) {
+                        best_cnt = cell_hist[c];
+                        cr = static_cast<std::uint8_t>(c);
+                    }
+                cell.cell_colors.assign(18, bg);
+                cell.cell_colors[0] = bg;
+                cell.cell_colors[1] = cr;
+                cell.pixel_indices.resize(cw * ch);
+                cell.error = 0.0f;
+                for (std::size_t row = 0; row < ch; ++row) {
+                    std::array<std::uint16_t, 16> hist{};
+                    for (std::size_t dx = 0; dx < cw; ++dx)
+                        ++hist[global[(py + row) * w + px + dx]];
+                    hist[bg] = 0;
+                    hist[cr] = 0;
+                    std::uint8_t t0 = cr, t1 = cr;
+                    std::uint16_t c0 = 0, c1 = 0;
+                    for (std::size_t c = 0; c < 16; ++c) {
+                        if (hist[c] > c0) {
+                            c1 = c0; t1 = t0;
+                            c0 = hist[c]; t0 = static_cast<std::uint8_t>(c);
+                        } else if (hist[c] > c1) {
+                            c1 = hist[c]; t1 = static_cast<std::uint8_t>(c);
+                        }
+                    }
+                    cell.cell_colors[2 + row * 2] = t0;
+                    cell.cell_colors[3 + row * 2] = t1;
+                    std::array<std::uint8_t, 4> rc = {bg, t0, t1, cr};
+                    for (std::size_t dx = 0; dx < cw; ++dx) {
+                        auto pl = color_space::linear_to_oklab(
+                            image[px + dx, py + row]);
+                        float bd = std::numeric_limits<float>::max();
+                        std::uint8_t bs = 0;
+                        for (std::uint8_t s = 0; s < 4; ++s) {
+                            auto& cl = palette_lab[rc[s]];
+                            float dL = pl.L - cl.L;
+                            float da = pl.a - cl.a;
+                            float db = pl.b - cl.b;
+                            float d = dL * dL + da * da + db * db;
+                            if (d < bd) { bd = d; bs = s; }
+                        }
+                        cell.pixel_indices[row * cw + dx] = bs;
+                        cell.error += bd;
+                    }
+                }
+                refined.fetch_add(cell.error, std::memory_order_relaxed);
+            });
+        result.total_error = refined.load();
+        return result;
+    }
+
     result.total_error = total_error.load();
     return result;
 }
@@ -1311,6 +1390,65 @@ ScreenResult quantize_afli_with_bg(
 
         result.cells[idx] = std::move(cell);
     });
+
+    // Global-FS palette coherence for AFLI: each row's 2-colour pair
+    // = top-2 most-used colours in that row's pixels from a full-
+    // palette FS output. Gated on tfn empty (error-diffusion methods).
+    if (!tfn) {
+        auto w = image.width();
+        auto global = global_fs_indices(image, palette_lab);
+        constexpr std::size_t cw = 8, ch = 8;
+        std::atomic<float> refined{0.0f};
+        parallel_for_cells(cx, cy,
+            [&](std::size_t idx, std::size_t cxi, std::size_t cyi) {
+                if (cxi < vic2::fli_bug_columns) {
+                    refined.fetch_add(result.cells[idx].error,
+                                       std::memory_order_relaxed);
+                    return;
+                }
+                auto& cell = result.cells[idx];
+                auto px = cxi * cw;
+                auto py = cyi * ch;
+                cell.cell_colors.assign(16, 0);
+                cell.pixel_indices.resize(cw * ch);
+                cell.error = 0.0f;
+                for (std::size_t row = 0; row < ch; ++row) {
+                    std::array<std::uint16_t, 16> hist{};
+                    for (std::size_t dx = 0; dx < cw; ++dx)
+                        ++hist[global[(py + row) * w + px + dx]];
+                    std::uint8_t t0 = 0, t1 = 0;
+                    std::uint16_t c0 = 0, c1 = 0;
+                    for (std::size_t c = 0; c < 16; ++c) {
+                        if (hist[c] > c0) {
+                            c1 = c0; t1 = t0;
+                            c0 = hist[c]; t0 = static_cast<std::uint8_t>(c);
+                        } else if (hist[c] > c1) {
+                            c1 = hist[c]; t1 = static_cast<std::uint8_t>(c);
+                        }
+                    }
+                    if (c1 == 0) t1 = t0;
+                    cell.cell_colors[row * 2] = t0;
+                    cell.cell_colors[row * 2 + 1] = t1;
+                    auto& cc0 = palette_lab[t0];
+                    auto& cc1 = palette_lab[t1];
+                    for (std::size_t dx = 0; dx < cw; ++dx) {
+                        auto pl = color_space::linear_to_oklab(
+                            image[px + dx, py + row]);
+                        float dL0 = pl.L - cc0.L, da0 = pl.a - cc0.a,
+                              db0 = pl.b - cc0.b;
+                        float dL1 = pl.L - cc1.L, da1 = pl.a - cc1.a,
+                              db1 = pl.b - cc1.b;
+                        float d0 = dL0 * dL0 + da0 * da0 + db0 * db0;
+                        float d1 = dL1 * dL1 + da1 * da1 + db1 * db1;
+                        cell.pixel_indices[row * cw + dx] = (d1 < d0) ? 1 : 0;
+                        cell.error += std::min(d0, d1);
+                    }
+                }
+                refined.fetch_add(cell.error, std::memory_order_relaxed);
+            });
+        result.total_error = refined.load();
+        return result;
+    }
 
     result.total_error = total_error.load();
     return result;
