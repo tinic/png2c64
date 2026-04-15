@@ -81,31 +81,27 @@ export function applyCRT(ctx, width, height, pixelScale = 4) {
     }
   }
 
-  // 2. RGB phosphor mask (aperture-grille style).
+  // 2. Chromatic aberration (imperfect beam convergence).
   //
-  // Each source column spans `pixelScale` canvas columns; modulate
-  // R/G/B emission across those columns as three cosines 120° apart
-  // so a white source pixel shows a visible triplet — red-tinted on
-  // the left, green in the middle, blue on the right. Sum of the
-  // three cosines is zero so average brightness is preserved.
-  const maskDepth = 0.22
-  const maskR = new Float32Array(pixelScale)
-  const maskG = new Float32Array(pixelScale)
-  const maskB = new Float32Array(pixelScale)
-  for (let p = 0; p < pixelScale; p++) {
-    const phase = (2 * Math.PI * p) / pixelScale
-    maskR[p] = 1 + maskDepth * Math.cos(phase)
-    maskG[p] = 1 + maskDepth * Math.cos(phase - (2 * Math.PI) / 3)
-    maskB[p] = 1 + maskDepth * Math.cos(phase - (4 * Math.PI) / 3)
-  }
-  for (let y = 0; y < height; y++) {
-    const rowOff = y * width * 4
-    for (let x = 0; x < width; x++) {
-      const p = x % pixelScale
-      const i = rowOff + x * 4
-      px[i]     = clamp255(px[i]     * maskR[p])
-      px[i + 1] = clamp255(px[i + 1] * maskG[p])
-      px[i + 2] = clamp255(px[i + 2] * maskB[p])
+  // Shift the red channel slightly left and the blue channel slightly
+  // right of green. White highlights show a red fringe on their left
+  // edge and a blue fringe on their right edge — the classic poorly-
+  // converged CRT look. Offset is in canvas pixels; a 2-pixel shift
+  // at 4× upscale is barely half a source pixel, enough to tint
+  // edges without ghosting.
+  const shift = Math.max(1, Math.round(pixelScale / 2))
+  {
+    const src = new Uint8ClampedArray(px)
+    for (let y = 0; y < height; y++) {
+      const rowOff = y * width * 4
+      for (let x = 0; x < width; x++) {
+        const i = rowOff + x * 4
+        const xr = Math.max(0, x - shift)
+        const xb = Math.min(width - 1, x + shift)
+        px[i]     = src[rowOff + xr * 4]           // R from left
+        px[i + 2] = src[rowOff + xb * 4 + 2]       // B from right
+        // G (px[i+1]) and alpha untouched.
+      }
     }
   }
 
