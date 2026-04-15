@@ -61,7 +61,6 @@ struct Config {
     bool charset_mixed = false;
     bool interactive = false;
     bool match_range = false;
-    std::string error_map_path;
     quantize::Metric metric = quantize::Metric::mse;
     bool graphics_only = false;
 
@@ -120,12 +119,6 @@ void print_usage() {
         "                                           pairs with --dither <method>).\n"
         "                                    blur = Pappas-Neuhoff perceptual blur.\n"
         "                                    ssim = Wang structural similarity.\n"
-        "  --error-map <path>               Save a per-pixel OKLab error\n"
-        "                                    heatmap PNG (black→red→yellow→\n"
-        "                                    white) at the mode's logical\n"
-        "                                    resolution. Useful for spotting\n"
-        "                                    fidelity hotspots and overlay\n"
-        "                                    decisions.\n"
         "  --version                        Print version and exit\n",
         png2c64::version);
 }
@@ -203,8 +196,6 @@ Result<Config> parse_args(int argc, char* argv[]) {
                 config.palette_name = std::string(val);
             } else if (arg == "--gallery") {
                 config.gallery = std::string(val);
-            } else if (arg == "--error-map") {
-                config.error_map_path = std::string(val);
             } else if (arg == "--dither") {
                 if (val == "gallery") { config.gallery = "dither"; }
                 else if (val == "none") config.dither_settings.method = dither::Method::none;
@@ -347,48 +338,6 @@ void iterm2_display_image(const Image& image, unsigned display_scale) {
 // ---------------------------------------------------------------------------
 // Render screen result to image
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Error-map output: per-pixel OKLab distance between the preprocessed
-// source and the rendered output, colour-mapped (black → red → yellow →
-// white). At the mode's logical resolution; rendered output is sampled
-// at every pixel_stretch step so multicolor (2:1) maps 1:1 to source.
-// ---------------------------------------------------------------------------
-
-Image build_error_map(const Image& source, const Image& rendered,
-                      const vic2::ModeParams& params, vic2::Mode mode) {
-    auto w = params.screen_width;
-    auto h = params.screen_height;
-    std::size_t pixel_stretch = vic2::is_double_wide(mode) ? 2 : 1;
-
-    std::vector<float> err(w * h);
-    float max_err = 0.0f;
-    for (std::size_t y = 0; y < h; ++y) {
-        for (std::size_t x = 0; x < w; ++x) {
-            auto s = color_space::linear_to_oklab(source[x, y]);
-            auto r = color_space::linear_to_oklab(
-                rendered[x * pixel_stretch, y]);
-            float dL = s.L - r.L, da = s.a - r.a, db = s.b - r.b;
-            float e = std::sqrt(dL * dL + da * da + db * db);
-            err[y * w + x] = e;
-            if (e > max_err) max_err = e;
-        }
-    }
-
-    // Black → red gradient. Single-channel intensity is easier to read
-    // than a multi-stop ramp; yellow/white stops added contrast that
-    // made the actually-worst regions blend with the moderate ones.
-    Image out(w * pixel_stretch, h);
-    for (std::size_t y = 0; y < h; ++y) {
-        for (std::size_t x = 0; x < w; ++x) {
-            float t = (max_err > 0) ? err[y * w + x] / max_err : 0.0f;
-            Color3f c = color_space::srgb_to_linear({t, 0.0f, 0.0f});
-            for (std::size_t s = 0; s < pixel_stretch; ++s)
-                out[x * pixel_stretch + s, y] = c;
-        }
-    }
-    return out;
-}
 
 Image render_screen(const quantize::ScreenResult& screen,
                     const Palette& pal, const vic2::ModeParams& params) {
@@ -1320,17 +1269,6 @@ int main(int argc, char* argv[]) {
     if (!save_result) {
         std::println(stderr, "Error: {}", save_result.error().message);
         return 1;
-    }
-
-    // Optional error map: per-pixel OKLab distance, colour-mapped.
-    if (!config->error_map_path.empty()) {
-        auto emap = build_error_map(*image, output, params, config->mode);
-        auto er = png_io::save(config->error_map_path, emap);
-        if (!er) {
-            std::println(stderr, "Error map: {}", er.error().message);
-        } else {
-            std::println("Error map: {}", config->error_map_path);
-        }
     }
 
     // Export PRG alongside PNG (for bitmap modes)

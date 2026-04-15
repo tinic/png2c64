@@ -80,9 +80,6 @@ charset::CharsetMode get_charset_mode(const std::string& mode) {
 struct PipelineResult {
     Image rendered;
     quantize::ScreenResult screen;
-    Image preprocessed;       // post-scale, post-preprocess source
-    vic2::ModeParams params;  // for pixel_stretch
-    vic2::Mode mode;
 };
 
 // Load image from memory, scale, preprocess
@@ -274,8 +271,7 @@ Result<PipelineResult> run_pipeline(const std::uint8_t* input_data,
         }
     }
 
-    return PipelineResult{std::move(output), *std::move(screen),
-                          *std::move(image), params, mode};
+    return PipelineResult{std::move(output), *std::move(screen)};
 }
 
 // Get rendered Image for any mode (charset or bitmap/sprite)
@@ -331,50 +327,6 @@ ConvertResult convert_rgba(const std::uint8_t* input_data,
     return {image_to_rgba(*img),
             static_cast<int>(img->width()),
             static_cast<int>(img->height()), ""};
-}
-
-ConvertResult convert_error_map_rgba(const std::uint8_t* input_data,
-                                     std::size_t input_size,
-                                     const Options& options) {
-    if (is_charset_mode(options.mode)) {
-        return {{}, 0, 0, "Error map not supported for charset modes"};
-    }
-    auto pr = run_pipeline(input_data, input_size, options);
-    if (!pr) return {{}, 0, 0, pr.error().message};
-
-    auto& src = pr->preprocessed;
-    auto& rendered = pr->rendered;
-    auto w = pr->params.screen_width;
-    auto h = pr->params.screen_height;
-    std::size_t pixel_stretch = vic2::is_double_wide(pr->mode) ? 2 : 1;
-
-    std::vector<float> err(w * h);
-    float max_err = 0.0f;
-    for (std::size_t y = 0; y < h; ++y) {
-        for (std::size_t x = 0; x < w; ++x) {
-            auto s = color_space::linear_to_oklab(src[x, y]);
-            auto r = color_space::linear_to_oklab(
-                rendered[x * pixel_stretch, y]);
-            float dL = s.L - r.L, da = s.a - r.a, db = s.b - r.b;
-            float e = std::sqrt(dL * dL + da * da + db * db);
-            err[y * w + x] = e;
-            if (e > max_err) max_err = e;
-        }
-    }
-
-    Image emap(w * pixel_stretch, h);
-    for (std::size_t y = 0; y < h; ++y) {
-        for (std::size_t x = 0; x < w; ++x) {
-            float t = (max_err > 0) ? err[y * w + x] / max_err : 0.0f;
-            Color3f c = color_space::srgb_to_linear({t, 0.0f, 0.0f});
-            for (std::size_t s = 0; s < pixel_stretch; ++s)
-                emap[x * pixel_stretch + s, y] = c;
-        }
-    }
-
-    return {image_to_rgba(emap),
-            static_cast<int>(emap.width()),
-            static_cast<int>(emap.height()), ""};
 }
 
 ConvertResult convert_prg(const std::uint8_t* input_data,

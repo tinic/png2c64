@@ -38,9 +38,6 @@ self.onmessage = async (e) => {
       case 'convertRGBA':
         result = Module.convertRGBA(args[0], args[1])
         break
-      case 'convertErrorMapRGBA':
-        result = Module.convertErrorMapRGBA(args[0], args[1])
-        break
       case 'convert':
         result = Module.convert(args[0], args[1])
         break

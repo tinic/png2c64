@@ -60,11 +60,10 @@ export function useWasm() {
   }
 
   function convertRGBA(imageBytes, options) { return call('convertRGBA', imageBytes, options) }
-  function convertErrorMapRGBA(imageBytes, options) { return call('convertErrorMapRGBA', imageBytes, options) }
   function convertPNG(imageBytes, options)  { return call('convert',     imageBytes, options) }
   function convertPRG(imageBytes, options)  { return call('convertPRG',  imageBytes, options) }
   function convertHeader(imageBytes, options, name) { return call('convertHeader', imageBytes, options, name) }
   function convertRaw(imageBytes, options, format)  { return call('convertRaw',    imageBytes, options, format) }
 
-  return { loading, error, convertRGBA, convertErrorMapRGBA, convertPNG, convertPRG, convertHeader, convertRaw }
+  return { loading, error, convertRGBA, convertPNG, convertPRG, convertHeader, convertRaw }
 }
