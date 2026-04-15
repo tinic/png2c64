@@ -109,7 +109,7 @@ export const PETSCII_METRICS = [
   { value: 'mse',  label: 'Per-pixel MSE' },
 ]
 export const PETSCII_DEFAULTS = {
-  metric: 'blur',
+  metric: 'mse',
   graphicsOnly: false,
 }
 
@@ -121,7 +121,7 @@ export const EXAMPLES = [
   { name: 'fantasy', file: 'fantasy.png', opts: { gamma: 1.0, ditherStrength: 1.0, matchRange: true } },
   { name: 'game', file: 'game.png', opts: { gamma: 2.0, ditherStrength: 1.0 } },
   { name: 'golden3', file: 'golden3.jpeg', opts: { gamma: 2.0, ditherStrength: 1.0, matchRange: true } },
-  { name: 'head', file: 'head.png', opts: { mode: 'petscii', gamma: 3.3, ditherStrength: 1.0, blackPoint: 0.09, whitePoint: 0.06 } },
+  { name: 'head', file: 'head.png', opts: { mode: 'petscii', gamma: 3.3, ditherStrength: 1.0, blackPoint: 0.09, whitePoint: 0.06, metric: 'blur' } },
   { name: 'monster', file: 'monster.jpeg', opts: { gamma: 3.0, ditherStrength: 1.0 } },
   { name: 'ship', file: 'ship.jpeg', opts: { gamma: 2.0, ditherStrength: 1.0, matchRange: true } },
 ]
