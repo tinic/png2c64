@@ -349,33 +349,24 @@ ConvertResult convert_error_map_rgba(const std::uint8_t* input_data,
     std::size_t pixel_stretch = vic2::is_double_wide(pr->mode) ? 2 : 1;
 
     std::vector<float> err(w * h);
+    float max_err = 0.0f;
     for (std::size_t y = 0; y < h; ++y) {
         for (std::size_t x = 0; x < w; ++x) {
             auto s = color_space::linear_to_oklab(src[x, y]);
             auto r = color_space::linear_to_oklab(
                 rendered[x * pixel_stretch, y]);
             float dL = s.L - r.L, da = s.a - r.a, db = s.b - r.b;
-            err[y * w + x] = std::sqrt(dL * dL + da * da + db * db);
+            float e = std::sqrt(dL * dL + da * da + db * db);
+            err[y * w + x] = e;
+            if (e > max_err) max_err = e;
         }
     }
 
-    // Top-5% threshold via nth_element.
-    std::vector<float> sorted = err;
-    auto cut = sorted.size() - sorted.size() / 20;
-    if (cut >= sorted.size()) cut = sorted.size() - 1;
-    std::nth_element(sorted.begin(),
-                     sorted.begin() + static_cast<std::ptrdiff_t>(cut),
-                     sorted.end());
-    float threshold = sorted[cut];
-
     Image emap(w * pixel_stretch, h);
-    constexpr float dim = 0.18f;
-    constexpr Color3f hot{1.0f, 0.05f, 0.0f};
     for (std::size_t y = 0; y < h; ++y) {
         for (std::size_t x = 0; x < w; ++x) {
-            auto base = rendered[x * pixel_stretch, y];
-            Color3f c{base.r * dim, base.g * dim, base.b * dim};
-            if (err[y * w + x] >= threshold) c = hot;
+            float t = (max_err > 0) ? err[y * w + x] / max_err : 0.0f;
+            Color3f c = color_space::srgb_to_linear({t, 0.0f, 0.0f});
             for (std::size_t s = 0; s < pixel_stretch; ++s)
                 emap[x * pixel_stretch + s, y] = c;
         }
