@@ -114,7 +114,7 @@ export const PETSCII_DEFAULTS = {
 }
 
 export const EXAMPLES = [
-  { name: 'alien', file: 'alien.png', opts: { gamma: 1.0, ditherStrength: 1.0, matchRange: true } },
+  { name: 'alien', file: 'alien.png', opts: { gamma: 1.0, contrast: 1.5, dither: 'ostromoukhov', ditherStrength: 1.0, matchRange: false } },
   { name: 'dog', file: 'dog.png', opts: { gamma: 3.0, ditherStrength: 1.0 } },
   { name: 'dragon', file: 'dragon.png', opts: { gamma: 1.0, ditherStrength: 1.0, matchRange: true } },
   { name: 'face', file: 'face.png', opts: { gamma: 3.0, ditherStrength: 1.0, sharpen: -0.5, saturation: 0.5 } },
