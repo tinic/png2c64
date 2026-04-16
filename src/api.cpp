@@ -177,7 +177,7 @@ Result<Image> run_charset_pipeline(const std::uint8_t* input_data,
 
     auto ds = make_dither_settings(options);
     auto metric = parse_metric(options);
-    auto result = charset::convert(*image, pal, cmode, ds, metric);
+    auto result = charset::convert(*image, pal, cmode, ds, metric, options.denoise);
     if (!result) return std::unexpected{result.error()};
 
     return charset::render(*result, pal);
@@ -357,7 +357,7 @@ ConvertResult convert_prg(const std::uint8_t* input_data,
 
         auto ds = make_dither_settings(options);
         auto metric = parse_metric(options);
-    auto result = charset::convert(*image, pal, cmode, ds, metric);
+    auto result = charset::convert(*image, pal, cmode, ds, metric, options.denoise);
         if (!result) return {{}, 0, 0, result.error().message};
 
         auto prg_data = prg::charset_text(*result);
@@ -537,7 +537,7 @@ ConvertResult convert_header(const std::uint8_t* input_data,
 
         auto ds = make_dither_settings(options);
         auto metric = parse_metric(options);
-    auto result = charset::convert(*image, pal, cmode, ds, metric);
+    auto result = charset::convert(*image, pal, cmode, ds, metric, options.denoise);
         if (!result) return {{}, 0, 0, result.error().message};
 
         auto header_text = charset::generate_header(*result, name);

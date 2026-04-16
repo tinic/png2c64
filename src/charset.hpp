@@ -39,10 +39,19 @@ struct CharsetResult {
 //
 // `metric` selects the per-cell color-selection error metric. Only
 // charset-mc currently honors anything other than `mse`.
+//
+// `denoise` (0.0-1.0) applies a cost-aware pattern-smoothing pass after
+// refinement: each candidate bit flip is scored as
+// `smoothness_gain - lambda * avg_fidelity_cost`, where the fidelity cost
+// is the real OKLab error increase measured against the source image,
+// averaged over cells using the pattern. Flips only where noise is
+// cheap; meaningful edge pixels are preserved automatically. Slot 0
+// (reserved empty) is never modified.
 Result<CharsetResult> convert(const Image& image, const Palette& palette,
                               CharsetMode mode,
                               const dither::Settings& dither_settings,
-                              quantize::Metric metric = quantize::Metric::mse);
+                              quantize::Metric metric = quantize::Metric::mse,
+                              float denoise = 0.0f);
 
 Result<void> write_header(std::string_view path,
                           const CharsetResult& result,

@@ -18,6 +18,8 @@ struct Options {
     float dither_strength = 1.0f;
     float error_clamp = 0.1f;
     float adaptive = 0.0f;
+    // Cost-aware pattern denoise for charset modes: 0.0 = off, 1.0 = strong.
+    float denoise = 0.0f;
     float hue_shift = 0.0f;
     float sharpen = 0.0f;
     float black_point = 0.0f;

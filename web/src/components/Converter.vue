@@ -2,7 +2,7 @@
 import { ref, reactive, watch, nextTick, computed } from 'vue'
 import { useWasm } from '../composables/useWasm.js'
 import { useImageUpload } from '../composables/useImageUpload.js'
-import { MODES, PALETTES, DITHER_METHODS, SLIDERS, DIFFUSION_SLIDERS, PETSCII_METRICS, EXAMPLES, defaultOptions, isSpriteMode, isCharsetMode, spriteGridDimensions, hasPrgExport, isErrorDiffusion } from '../lib/options.js'
+import { MODES, PALETTES, DITHER_METHODS, SLIDERS, DIFFUSION_SLIDERS, CHARSET_SLIDERS, PETSCII_METRICS, EXAMPLES, defaultOptions, isSpriteMode, isCharsetMode, spriteGridDimensions, hasPrgExport, isErrorDiffusion } from '../lib/options.js'
 import { track } from '../lib/analytics.js'
 
 import InputNumber from 'primevue/inputnumber'
@@ -186,7 +186,7 @@ watch(crtEnabled, (val) => { track('crt-toggle', { enabled: val }) })
 // Track slider tweaks (debounced — fires after the user stops dragging)
 let tweakTimer = null
 for (const key of ['gamma', 'ditherStrength', 'brightness', 'contrast', 'saturation',
-    'hueShift', 'sharpen', 'blackPoint', 'whitePoint', 'errorClamp', 'adaptive']) {
+    'hueShift', 'sharpen', 'blackPoint', 'whitePoint', 'errorClamp', 'adaptive', 'denoise']) {
   watch(() => options[key], (val) => {
     clearTimeout(tweakTimer)
     tweakTimer = setTimeout(() => track('setting-tweak', { key, value: val }), 500)
@@ -479,6 +479,21 @@ function onFileSelect(event) {
                     optionValue="value" optionLabel="label" class="w-full" />
                 </div>
               </div>
+
+              <!-- Charset-only: cost-aware pattern denoise slider. -->
+              <template v-if="isCharsetMode(options.mode)">
+                <div v-for="s in CHARSET_SLIDERS" :key="s.key"
+                  class="grid align-items-center">
+                  <label class="col-4 text-xs text-color-secondary font-semibold" :title="s.tip">{{ s.label }}</label>
+                  <div class="col-5">
+                    <Slider v-model="options[s.key]" :min="s.min" :max="s.max" :step="s.step" class="w-full" />
+                  </div>
+                  <div class="col-3">
+                    <InputNumber v-model="options[s.key]" :min="s.min" :max="s.max" :step="s.step"
+                      :minFractionDigits="2" :maxFractionDigits="2" class="w-full input-sm" />
+                  </div>
+                </div>
+              </template>
 
               <!-- PETSCII-only: restrict candidate glyphs to graphic
                    characters (skip alphabet/digits/punctuation). Helps

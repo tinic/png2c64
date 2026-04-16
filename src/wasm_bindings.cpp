@@ -29,6 +29,8 @@ Options parse_js_options(val js_opts) {
         opts.error_clamp = js_opts["errorClamp"].as<float>();
     if (js_opts.hasOwnProperty("adaptive"))
         opts.adaptive = js_opts["adaptive"].as<float>();
+    if (js_opts.hasOwnProperty("denoise"))
+        opts.denoise = js_opts["denoise"].as<float>();
     if (js_opts.hasOwnProperty("hueShift"))
         opts.hue_shift = js_opts["hueShift"].as<float>();
     if (js_opts.hasOwnProperty("sharpen"))

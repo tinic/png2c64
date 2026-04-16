@@ -101,6 +101,13 @@ export const DIFFUSION_SLIDERS = [
     tip: 'Contrast-adaptive error diffusion. Reduces dithering in detailed areas, keeps it in flat areas.' },
 ]
 
+// Charset-mode only: cost-aware pattern denoise. Flips bits whose fidelity
+// cost against the source is small enough to be outweighed by smoothness.
+export const CHARSET_SLIDERS = [
+  { key: 'denoise',        label: 'Denoise',     min: 0,   max: 1.0, step: 0.05, default: 0.0,
+    tip: 'Cost-aware pattern cleanup. Flips stray pixels whose fidelity cost is small compared to the smoothness gain; meaningful edges are preserved.' },
+]
+
 // PETSCII-only per-cell error metric. Shown only when mode === 'petscii'.
 // blur and ssim use the continuous source and skip pixel-level dither.
 export const PETSCII_METRICS = [
@@ -138,7 +145,7 @@ export function defaultOptions() {
     spritesX: 1,
     spritesY: 1,
   }
-  for (const s of [...SLIDERS, ...DIFFUSION_SLIDERS]) opts[s.key] = s.default
+  for (const s of [...SLIDERS, ...DIFFUSION_SLIDERS, ...CHARSET_SLIDERS]) opts[s.key] = s.default
   Object.assign(opts, PETSCII_DEFAULTS)
   return opts
 }

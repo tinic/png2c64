@@ -63,6 +63,7 @@ struct Config {
     bool match_range = false;
     quantize::Metric metric = quantize::Metric::mse;
     bool graphics_only = false;
+    float denoise = 0.0f;
 
     charset::CharsetMode get_charset_mode() const {
         if (charset_mixed) return charset::CharsetMode::mixed;
@@ -96,6 +97,7 @@ void print_usage() {
         "  --dither-strength <float>       Dithering strength 0.0-2.0 (default: 0.7)\n"
         "  --error-clamp <float>           Max error per channel 0.1-2.0 (default: 0.1)\n"
         "  --adaptive <float>              Contrast-adaptive diffusion 0.0-1.0 (default: 0.0)\n"
+        "  --denoise <float>               Charset pattern denoise 0.0-1.0 (default: 0.0, charset modes only)\n"
         "  --no-serpentine                  Disable serpentine scanning\n"
         "  --match-range                    Enable palette range matching (default: off)\n"
         "  --brightness <float>            Brightness -1.0 to 1.0 (default: 0.0)\n"
@@ -235,6 +237,8 @@ Result<Config> parse_args(int argc, char* argv[]) {
                 config.dither_settings.error_clamp = std::stof(std::string(val));
             } else if (arg == "--adaptive") {
                 config.dither_settings.adaptive = std::stof(std::string(val));
+            } else if (arg == "--denoise") {
+                config.denoise = std::stof(std::string(val));
             } else if (arg == "--brightness") {
                 config.preprocess.brightness = std::stof(std::string(val));
             } else if (arg == "--contrast") {
@@ -423,12 +427,14 @@ void run_charset_pipeline_and_display(const Image& scaled_image,
                                        const Palette& pal,
                                        charset::CharsetMode charset_mode,
                                        const dither::Settings& ds,
-                                       bool match_range = true) {
+                                       bool match_range = true,
+                                       quantize::Metric metric = quantize::Metric::mse,
+                                       float denoise = 0.0f) {
     auto img = scaled_image;
     preprocess::apply(img, pp);
     if (match_range) preprocess::match_palette_range(img, pal);
 
-    auto result = charset::convert(img, pal, charset_mode, ds);
+    auto result = charset::convert(img, pal, charset_mode, ds, metric, denoise);
     if (!result) return;
 
     auto preview = charset::render(*result, pal);
@@ -579,7 +585,9 @@ void run_dither_gallery_bitmap(const Image& image,
 // Dither gallery for charset modes: re-runs charset convert per method
 void run_dither_gallery_charset(const Image& image, const Palette& pal,
                                  charset::CharsetMode charset_mode,
-                                 const dither::Settings& base_settings) {
+                                 const dither::Settings& base_settings,
+                                 quantize::Metric metric = quantize::Metric::mse,
+                                 float denoise = 0.0f) {
     std::println("\n=== Dither Gallery ({} methods) ===\n",
                  dither_gallery.size());
 
@@ -587,7 +595,7 @@ void run_dither_gallery_charset(const Image& image, const Palette& pal,
         dither::Settings settings = base_settings;
         settings.method = method;
 
-        auto result = charset::convert(image, pal, charset_mode, settings);
+        auto result = charset::convert(image, pal, charset_mode, settings, metric, denoise);
         if (!result) continue;
 
         auto preview = charset::render(*result, pal);
@@ -615,7 +623,8 @@ void run_float_gallery(std::string_view title,
         std::println("--- {} ---", label);
         if (config.charset) {
             run_charset_pipeline_and_display(scaled_image, pp, pal,
-                                             config.get_charset_mode(), ds, config.match_range);
+                                             config.get_charset_mode(), ds, config.match_range,
+                                             config.metric, config.denoise);
         } else {
             run_pipeline_and_display(scaled_image, pp, pal, config.mode,
                                      params, ds, config.match_range);
@@ -636,7 +645,8 @@ bool run_gallery(const std::string& gallery_name,
             if (preprocessed_image) {
                 run_dither_gallery_charset(*preprocessed_image, pal,
                                            config.get_charset_mode(),
-                                           config.dither_settings);
+                                           config.dither_settings,
+                                           config.metric, config.denoise);
             }
         } else if (preprocessed_image && screen) {
             run_dither_gallery_bitmap(*preprocessed_image, *screen, pal,
@@ -817,7 +827,8 @@ void run_interactive(const Image& scaled_image, Config& config,
 
         Image output;
         if (is_charset) {
-            auto result = charset::convert(img, pal, charset_mode, ds);
+            auto result = charset::convert(img, pal, charset_mode, ds,
+                                            config.metric, config.denoise);
             if (!result) return;
             output = charset::render(*result, pal);
         } else {
@@ -955,7 +966,8 @@ void run_interactive(const Image& scaled_image, Config& config,
                 preprocess::apply(img, pp);
                 if (config.match_range) preprocess::match_palette_range(img, pal);
                 if (is_charset) {
-                    auto result = charset::convert(img, pal, charset_mode, ds);
+                    auto result = charset::convert(img, pal, charset_mode, ds,
+                                                    config.metric, config.denoise);
                     if (result) {
                         // Derive C identifier from path
                         auto stem = config.output_path;
@@ -1090,7 +1102,8 @@ int main(int argc, char* argv[]) {
         std::println("Converting to {} charset...", mode_label);
         auto result = charset::convert(*image, pal, cmode,
                                        config->dither_settings,
-                                       config->metric);
+                                       config->metric,
+                                       config->denoise);
         if (!result) {
             std::println(stderr, "Error: {}", result.error().message);
             return 1;

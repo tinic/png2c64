@@ -1185,14 +1185,25 @@ DeduplicatedCharset deduplicate(const std::vector<CellQuant>& cells) {
 }
 
 // dist_func: callable(std::size_t entry_a, std::size_t entry_b) -> float
+//
+// Slot 0 of the output charset is reserved for an empty (all-background)
+// pattern so nearly-empty cells can snap to it rather than forcing the
+// quantizer to invent a stray-pixel pattern. Budget is therefore 255
+// non-empty entries plus (optionally) the natural empty entry; the empty
+// entry is protected from being merged away.
 void merge_to_256(DeduplicatedCharset& dedup, auto dist_func) {
     std::vector<std::size_t> alive;
+    bool has_empty = false;
     for (std::size_t i = 0; i < dedup.entries.size(); ++i)
-        if (dedup.entries[i].alive) alive.push_back(i);
+        if (dedup.entries[i].alive) {
+            alive.push_back(i);
+            if (dedup.entries[i].pattern == empty_pattern) has_empty = true;
+        }
 
-    if (alive.size() <= 256) return;
+    auto budget = has_empty ? std::size_t{256} : std::size_t{255};
+    if (alive.size() <= budget) return;
 
-    auto merges_needed = alive.size() - 256;
+    auto merges_needed = alive.size() - budget;
 
     struct Pair {
         std::size_t a, b;
@@ -1235,6 +1246,9 @@ void merge_to_256(DeduplicatedCharset& dedup, auto dist_func) {
     for (auto& p : pairs) {
         if (merges_done >= merges_needed) break;
         if (!is_alive[p.a] || !is_alive[p.b]) continue;
+        // Never merge the reserved empty pattern into anything.
+        if (dedup.entries[p.a].pattern == empty_pattern ||
+            dedup.entries[p.b].pattern == empty_pattern) continue;
 
         auto keep = p.a;
         auto discard = p.b;
@@ -1302,6 +1316,235 @@ float cell_pattern_error(
     }
 
     return err;
+}
+
+// ---------------------------------------------------------------------------
+// Cost-aware pattern smoothing (denoise)
+//
+// After refinement, optionally flip bits whose combined score
+//   smoothness_gain - lambda * avg_fidelity_cost
+// is positive. Fidelity cost is the real OKLab error increase per cell
+// using the pattern (averaged over cells — makes lambda image-scale-
+// independent). Smoothness gain counts 4-connected edges that become
+// same-class minus those that become different-class after the flip.
+//
+// Slot 0 (reserved empty) and unused patterns are skipped. DBS-style
+// iteration until stable or 8 passes. Patterns are processed in
+// parallel (one thread per pattern) — no cross-pattern state.
+// ---------------------------------------------------------------------------
+void denoise_patterns_cost_aware(
+    const Image& image, const Palette& palette,
+    bool multicolor, bool mixed,
+    std::uint8_t bg, std::uint8_t mc1, std::uint8_t mc2,
+    std::size_t cols, std::size_t rows,
+    std::array<Pattern, 256>& patterns,
+    const std::array<bool, 256>& pattern_is_hires,
+    const std::vector<std::uint8_t>& assignments,
+    const std::vector<std::uint8_t>& color_ram,
+    const std::vector<bool>& cell_is_hires_in,
+    float lambda_user) {
+
+    if (lambda_user <= 0.0f) return;
+
+    auto pal_lab = precompute_lab(palette);
+    auto num_cells = cols * rows;
+
+    // Two-axis tuning. Lambda (geometric) weights the fidelity cost; a
+    // second `min_smooth` knob sets the minimum pattern-local smoothness
+    // gain required to even consider a flip. Without min_smooth, "free"
+    // flips (pixels whose fidelity delta is ~0 because the quantiser
+    // sees either class as equally good) pass at any lambda, so the
+    // low end of the strength slider still produces heavy smoothing.
+    // Using min_smooth keeps strength≈0 nearly inert.
+    constexpr float LAMBDA_MIN = 30.0f;     // at strength 1.0
+    constexpr float LAMBDA_MAX = 10000.0f;  // at strength approaching 0
+    float strength = std::clamp(lambda_user, 0.0f, 1.0f);
+    float exponent = 1.0f - strength;
+    float lambda = LAMBDA_MIN *
+                   std::pow(LAMBDA_MAX / LAMBDA_MIN, exponent);
+    // Integer minimum smoothness gain to permit a flip. Ramps from 4
+    // (effectively off — flips only in near-uniform regions) down to 1
+    // (any gain allowed) as strength → 1.
+    int min_smooth_delta = static_cast<int>(
+        std::round(4.0f * (1.0f - strength)));
+    if (min_smooth_delta < 1) min_smooth_delta = 1;
+    if (min_smooth_delta > 4) min_smooth_delta = 4;
+
+    // Group cells by assigned pattern.
+    std::array<std::vector<std::size_t>, 256> pat_cells;
+    for (std::size_t ci = 0; ci < num_cells; ++ci)
+        pat_cells[assignments[ci]].push_back(ci);
+
+    // Precompute cell pixels in OKLab. Mixed: hires cells = 64 pixels,
+    // MC cells = 32 pixels (horizontal pairs averaged). Non-mixed: all
+    // cells have the same shape.
+    auto cell_w_for = [&](std::size_t ci) -> std::size_t {
+        if (mixed) return cell_is_hires_in[ci] ? 8 : 4;
+        return multicolor ? 4 : 8;
+    };
+    std::vector<std::vector<OKLab>> cells_lab(num_cells);
+    for (std::size_t cy = 0; cy < rows; ++cy) {
+        for (std::size_t cx = 0; cx < cols; ++cx) {
+            auto ci = cy * cols + cx;
+            auto W = cell_w_for(ci);
+            cells_lab[ci].reserve(W * 8);
+            bool mc_cell = (W == 4);
+            for (std::size_t dy = 0; dy < 8; ++dy) {
+                for (std::size_t dx = 0; dx < W; ++dx) {
+                    if (mc_cell) {
+                        // Average pixel pair for MC cells
+                        std::size_t base_x = mixed ? cx * 8 : cx * 4;
+                        auto p0 = image[base_x + dx * 2, cy * 8 + dy];
+                        auto p1 = image[base_x + dx * 2 + 1, cy * 8 + dy];
+                        Color3f avg{(p0.r + p1.r) * 0.5f,
+                                    (p0.g + p1.g) * 0.5f,
+                                    (p0.b + p1.b) * 0.5f};
+                        cells_lab[ci].push_back(color_space::linear_to_oklab(avg));
+                    } else {
+                        cells_lab[ci].push_back(color_space::linear_to_oklab(
+                            image[cx * 8 + dx, cy * 8 + dy]));
+                    }
+                }
+            }
+        }
+    }
+
+    std::atomic<std::size_t> next_pat{1}; // slot 0 reserved
+    std::atomic<std::size_t> total_flips{0};
+
+    auto worker = [&] {
+        while (true) {
+            auto p = next_pat.fetch_add(1, std::memory_order_relaxed);
+            if (p >= 256) break;
+            if (pat_cells[p].empty()) continue;
+
+            bool is_hi = mixed ? pattern_is_hires[p] : !multicolor;
+            std::size_t W = is_hi ? 8 : 4;
+            int classes = is_hi ? 2 : 4;
+            std::size_t bits_per = is_hi ? 1 : 2;
+            std::uint8_t mask = static_cast<std::uint8_t>((1u << bits_per) - 1);
+
+            // Decode pattern to class grid [y][x].
+            std::array<std::array<std::uint8_t, 8>, 8> grid{};
+            for (std::size_t y = 0; y < 8; ++y)
+                for (std::size_t x = 0; x < W; ++x) {
+                    auto shift = (W - 1 - x) * bits_per;
+                    grid[y][x] = static_cast<std::uint8_t>(
+                        (patterns[p][y] >> shift) & mask);
+                }
+
+            auto class_color = [&](std::uint8_t klass, std::size_t ci)
+                -> const OKLab& {
+                if (is_hi)
+                    return klass == 0 ? pal_lab[bg] : pal_lab[color_ram[ci]];
+                switch (klass) {
+                    case 0: return pal_lab[bg];
+                    case 1: return pal_lab[mc1];
+                    case 2: return pal_lab[mc2];
+                    default: return pal_lab[color_ram[ci]];
+                }
+            };
+
+            auto inv_n = 1.0f / static_cast<float>(pat_cells[p].size());
+            std::size_t local_flips = 0;
+
+            constexpr std::array<int, 4> dx{-1, 1, 0, 0};
+            constexpr std::array<int, 4> dy{0, 0, -1, 1};
+
+            for (int pass = 0; pass < 8; ++pass) {
+                bool any_flip = false;
+                for (std::size_t y = 0; y < 8; ++y) {
+                    for (std::size_t x = 0; x < W; ++x) {
+                        std::uint8_t cur = grid[y][x];
+                        float best_score = 0.0f;
+                        std::uint8_t best_class = cur;
+
+                        for (int c2 = 0; c2 < classes; ++c2) {
+                            if (c2 == cur) continue;
+
+                            // Smoothness delta (pattern-local)
+                            int smooth_delta = 0;
+                            for (std::size_t k = 0; k < 4; ++k) {
+                                auto nxs = static_cast<long long>(x) + dx[k];
+                                auto nys = static_cast<long long>(y) + dy[k];
+                                if (nxs < 0 ||
+                                    nxs >= static_cast<long long>(W))
+                                    continue;
+                                if (nys < 0 || nys >= 8) continue;
+                                auto nc = grid[static_cast<std::size_t>(nys)]
+                                             [static_cast<std::size_t>(nxs)];
+                                if (nc == cur) --smooth_delta;
+                                if (nc == static_cast<std::uint8_t>(c2))
+                                    ++smooth_delta;
+                            }
+                            // Reject flips whose smoothness gain is below
+                            // the minimum permitted by current strength.
+                            // Also the natural rejection: non-positive
+                            // smooth_delta can never beat positive lambda
+                            // * fid_avg.
+                            if (smooth_delta < min_smooth_delta) continue;
+
+                            // Fidelity delta per cell, averaged
+                            float fid_sum = 0.0f;
+                            auto pix_idx = y * W + x;
+                            for (auto ci : pat_cells[p]) {
+                                auto& px = cells_lab[ci][pix_idx];
+                                auto& oc = class_color(cur, ci);
+                                auto& nc = class_color(
+                                    static_cast<std::uint8_t>(c2), ci);
+                                float dOL = px.L - oc.L;
+                                float dOa = px.a - oc.a;
+                                float dOb = px.b - oc.b;
+                                float dNL = px.L - nc.L;
+                                float dNa = px.a - nc.a;
+                                float dNb = px.b - nc.b;
+                                float e_old =
+                                    dOL * dOL + dOa * dOa + dOb * dOb;
+                                float e_new =
+                                    dNL * dNL + dNa * dNa + dNb * dNb;
+                                fid_sum += e_new - e_old;
+                            }
+                            float fid_avg = fid_sum * inv_n;
+
+                            float score = static_cast<float>(smooth_delta)
+                                          - lambda * fid_avg;
+                            if (score > best_score) {
+                                best_score = score;
+                                best_class = static_cast<std::uint8_t>(c2);
+                            }
+                        }
+
+                        if (best_class != cur) {
+                            grid[y][x] = best_class;
+                            any_flip = true;
+                            ++local_flips;
+                        }
+                    }
+                }
+                if (!any_flip) break;
+            }
+
+            // Re-encode
+            for (std::size_t y = 0; y < 8; ++y) {
+                std::uint8_t byte = 0;
+                for (std::size_t x = 0; x < W; ++x) {
+                    auto shift = (W - 1 - x) * bits_per;
+                    byte |= static_cast<std::uint8_t>(grid[y][x] << shift);
+                }
+                patterns[p][y] = byte;
+            }
+            total_flips.fetch_add(local_flips, std::memory_order_relaxed);
+        }
+    };
+
+    auto nt = std::min<std::size_t>(hw_threads(), 256);
+    std::vector<std::jthread> threads;
+    threads.reserve(nt - 1);
+    for (std::size_t t = 1; t < nt; ++t) threads.emplace_back(worker);
+    worker();
+
+    log_println("  Denoise (strength={:.2f}, lambda={:.1f}, min_smooth={}): {} bit flips",
+                lambda_user, lambda, min_smooth_delta, total_flips.load());
 }
 
 void refine_charset(
@@ -1749,6 +1992,7 @@ void refine_charset(
                 pat_cells[assignments[ci]].push_back(ci);
 
             for (std::size_t p = 0; p < 256; ++p) {
+                if (p == 0) continue; // slot 0 pinned as empty pattern
                 if (pat_cells[p].empty()) continue;
 
                 Pattern new_pat = patterns[p];
@@ -2227,7 +2471,10 @@ void refine_charset_mixed(
 
                 for (std::size_t p = 0; p < 256; ++p) {
                     if (p == assignments[ci]) continue;
-                    if (pattern_is_hires[p] != is_hi) continue; // mode must match
+                    // Slot 0 is the reserved empty pattern (all bg) and is
+                    // eligible for cells of either mode — an all-zero
+                    // pattern renders identically as hires or MC.
+                    if (p != 0 && pattern_is_hires[p] != is_hi) continue;
                     float err = use_fast
                         ? cell_err_mc_blur_fast(ci, p, current_pc)
                         : cell_err_metric(ci, patterns[p], current_pc);
@@ -2288,6 +2535,7 @@ void refine_charset_mixed(
                 pat_cells[assignments[ci]].push_back(ci);
 
             for (std::size_t p = 0; p < 256; ++p) {
+                if (p == 0) continue; // slot 0 pinned as empty pattern
                 if (pat_cells[p].empty()) continue;
 
                 Pattern new_pat{};
@@ -2366,7 +2614,8 @@ void refine_charset_mixed(
 Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
                               CharsetMode mode,
                               const dither::Settings& dither_settings,
-                              quantize::Metric metric) {
+                              quantize::Metric metric,
+                              float denoise) {
     bool multicolor = (mode == CharsetMode::multicolor);
     bool mixed = (mode == CharsetMode::mixed);
     // Mixed mode uses full 8-pixel-wide cells (like hires)
@@ -2555,12 +2804,12 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
             alive_indices.push_back(i);
     }
 
+    // Slot 0 is always reserved for the empty (all-background) pattern,
+    // whether or not a natural empty entry exists in the dedup set.
     std::vector<std::uint8_t> entry_to_charset(dedup.entries.size(), 0);
-    std::size_t next_idx = 0;
-    if (empty_entry_idx != std::numeric_limits<std::size_t>::max()) {
+    std::size_t next_idx = 1;
+    if (empty_entry_idx != std::numeric_limits<std::size_t>::max())
         entry_to_charset[empty_entry_idx] = 0;
-        next_idx = 1;
-    }
     for (auto ei : alive_indices)
         entry_to_charset[ei] = static_cast<std::uint8_t>(next_idx++);
 
@@ -2574,6 +2823,11 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
         flat_patterns[idx] = dedup.entries[i].pattern;
         flat_pattern_is_hires[idx] = dedup.entries[i].is_hires;
     }
+    // Slot 0 is the reserved empty pattern. Force its mode flag to MC so
+    // mixed-mode MC cells can pick it via the MC-blur fast path precompute
+    // (pattern_is_hires[0]=true would exclude it from the precompute).
+    flat_patterns[0] = empty_pattern;
+    flat_pattern_is_hires[0] = false;
 
     std::vector<std::uint8_t> flat_assignments(num_cells);
     std::vector<std::uint8_t> flat_color_ram(num_cells);
@@ -2599,6 +2853,27 @@ Result<CharsetResult> convert(const Image& image_in, const Palette& palette,
         refine_charset(image, palette, multicolor, bg, mc1, mc2,
                        cols, rows, flat_patterns, flat_assignments,
                        flat_color_ram, 10, !has_dither, metric);
+    }
+
+    // Phase 7b: cost-aware denoise + one more assignment pass so cells
+    // settle on the smoothed patterns.
+    if (denoise > 0.0f) {
+        denoise_patterns_cost_aware(
+            image, palette, multicolor, mixed, bg, mc1, mc2,
+            cols, rows, flat_patterns, flat_pattern_is_hires,
+            flat_assignments, flat_color_ram, cell_is_hires, denoise);
+
+        if (mixed) {
+            refine_charset_mixed(image, palette, bg, mc1, mc2,
+                                 cols, rows, flat_patterns,
+                                 flat_pattern_is_hires, flat_assignments,
+                                 flat_color_ram, cell_is_hires,
+                                 2, false, metric);
+        } else {
+            refine_charset(image, palette, multicolor, bg, mc1, mc2,
+                           cols, rows, flat_patterns, flat_assignments,
+                           flat_color_ram, 2, false, metric);
+        }
     }
 
     // Recount unique patterns after refinement
